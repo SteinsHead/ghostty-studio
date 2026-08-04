@@ -1,0 +1,158 @@
+// @vitest-environment jsdom
+import { act, useState } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { SettingControl } from "./components/SettingControl";
+import { SettingRow } from "./components/SettingRow";
+import { TerminalPreview } from "./components/TerminalPreview";
+import { compositePreviewBackground } from "./previewColor";
+import type { RuntimeOption } from "./types";
+
+const opacityOption: RuntimeOption = {
+  key: "background-opacity",
+  description: "Terminal background opacity",
+  defaultValues: ["1"],
+  currentValues: [],
+  category: "高级",
+  kind: "number",
+  choices: [],
+  repeatable: false,
+  platform: null,
+  since: null,
+  risk: "normal",
+  editable: true,
+};
+
+function optionWithKey(key: string): RuntimeOption {
+  return { ...opacityOption, key };
+}
+
+function SliderHarness({ onInput }: { onInput(value: string): void }) {
+  const [value, setValue] = useState("1");
+  return (
+    <>
+      <SettingRow
+        option={opacityOption}
+        value={value}
+        baselineValue="1"
+        configuredInEditingLayer={false}
+        sourceLabel="测试配置层"
+        onValueChange={(_key, nextValue) => {
+          onInput(nextValue);
+          setValue(nextValue);
+        }}
+        onReset={(_key, nextValue) => setValue(nextValue)}
+      />
+      <TerminalPreview
+        values={{
+          background: "1e1e2e",
+          foreground: "cdd6f4",
+          "background-opacity": value,
+        }}
+      />
+    </>
+  );
+}
+
+describe("opacity preview stability", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean })
+      .IS_REACT_ACT_ENVIRONMENT = true;
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it("pre-composites every boundary value into an opaque RGB color", () => {
+    expect(compositePreviewBackground("#1e1e2e", 0)).toBe("rgb(17, 19, 24)");
+    expect(compositePreviewBackground("#1e1e2e", 0.9)).toBe("rgb(29, 29, 44)");
+    expect(compositePreviewBackground("#1e1e2e", 1)).toBe("rgb(30, 30, 46)");
+    expect(compositePreviewBackground("#ff000080", 0.5, "#000000")).toBe("rgb(64, 0, 0)");
+
+    for (const opacity of [-1, 0, 0.9, 0.99, 1, 2, Number.NaN]) {
+      const result = compositePreviewBackground("#1e1e2e", opacity);
+      expect(result).toMatch(/^rgb\(\d+, \d+, \d+\)$/);
+      expect(result).not.toContain("rgba");
+      expect(result).not.toContain("transparent");
+    }
+  });
+
+  it("keeps slider geometry nodes mounted while crossing the baseline", () => {
+    const onInput = vi.fn();
+    act(() => root.render(<SliderHarness onInput={onInput} />));
+
+    const range = container.querySelector<HTMLInputElement>('input[type="range"]');
+    const number = container.querySelector<HTMLInputElement>('input[type="number"]');
+    const settingInput = container.querySelector<HTMLElement>(".setting-input");
+    const reset = container.querySelector<HTMLButtonElement>(".inline-reset");
+    const screen = container.querySelector<HTMLElement>(".terminal-screen");
+    const firstLine = screen?.firstElementChild;
+    expect(range && number && settingInput && reset && screen && firstLine).toBeTruthy();
+
+    const rangeNode = range!;
+    const resetNode = reset!;
+    const screenNode = screen!;
+    const nativeValueSetter = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )?.set;
+    expect(nativeValueSetter).toBeTypeOf("function");
+    expect(settingInput!.children).toHaveLength(2);
+    expect(resetNode.classList.contains("inline-reset--placeholder")).toBe(true);
+
+    const values = ["0.9", "0.91", "0.92", "0.93", "0.94", "0.95", "0.96", "0.97", "0.98", "0.99", "1"];
+    for (const value of values) {
+      act(() => {
+        nativeValueSetter!.call(rangeNode, value);
+        rangeNode.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+
+      expect(rangeNode.value).toBe(value);
+      expect(number!.value).toBe(value);
+      expect(container.querySelector(".terminal-screen")).toBe(screenNode);
+      expect(screenNode.firstElementChild).toBe(firstLine);
+      expect(screenNode.style.backgroundColor).toMatch(/^rgb\(/);
+      expect(screenNode.style.backgroundColor).not.toContain("rgba");
+      expect(settingInput!.children).toHaveLength(2);
+      expect(container.querySelector(".inline-reset")).toBe(resetNode);
+      expect(resetNode.classList.contains("inline-reset--placeholder")).toBe(value === "1");
+    }
+
+    expect(onInput).toHaveBeenCalledTimes(values.length);
+  });
+
+  it.each([
+    "background-opacity",
+    "cursor-opacity",
+    "unfocused-split-opacity",
+  ])("keeps %s controls on the same bounded scale", (key) => {
+    act(() => root.render(
+      <SettingControl option={optionWithKey(key)} value="0.9" onChange={() => undefined} />,
+    ));
+
+    const range = container.querySelector<HTMLInputElement>('input[type="range"]');
+    const number = container.querySelector<HTMLInputElement>('input[type="number"]');
+    expect(range?.min).toBe("0");
+    expect(range?.max).toBe("1");
+    expect(range?.step).toBe("0.01");
+    expect(number?.min).toBe("0");
+    expect(number?.max).toBe("1");
+    expect(number?.step).toBe("0.01");
+  });
+
+  it("does not add a range to ordinary numeric controls", () => {
+    act(() => root.render(
+      <SettingControl option={optionWithKey("font-size")} value="14" onChange={() => undefined} />,
+    ));
+
+    expect(container.querySelector('input[type="range"]')).toBeNull();
+  });
+});

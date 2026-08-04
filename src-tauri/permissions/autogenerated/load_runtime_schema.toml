@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-load-runtime-schema"
+description = "Enables the load_runtime_schema command without any pre-configured scope."
+commands.allow = ["load_runtime_schema"]
+
+[[permission]]
+identifier = "deny-load-runtime-schema"
+description = "Denies the load_runtime_schema command without any pre-configured scope."
+commands.deny = ["load_runtime_schema"]

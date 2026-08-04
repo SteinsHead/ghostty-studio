@@ -1,0 +1,17 @@
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
+.DS_Store
+*.log
+coverage/
+.idea/
+.vscode/
+.env*
+!.env.example
+*.dmg
+*.app/
+*.p12
+*.pfx
+*.pem
+*.key

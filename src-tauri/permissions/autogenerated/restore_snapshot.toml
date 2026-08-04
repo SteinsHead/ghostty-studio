@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-restore-snapshot"
+description = "Enables the restore_snapshot command without any pre-configured scope."
+commands.allow = ["restore_snapshot"]
+
+[[permission]]
+identifier = "deny-restore-snapshot"
+description = "Denies the restore_snapshot command without any pre-configured scope."
+commands.deny = ["restore_snapshot"]

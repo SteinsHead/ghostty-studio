@@ -1,0 +1,48 @@
+{
+  "name": "ghostty-studio",
+  "private": true,
+  "version": "0.1.0",
+  "description": "A visual Ghostty configurator that respects your config file.",
+  "license": "MIT",
+  "author": "SteinsHead",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SteinsHead/ghostty-studio.git"
+  },
+  "homepage": "https://github.com/SteinsHead/ghostty-studio#readme",
+  "bugs": "https://github.com/SteinsHead/ghostty-studio/issues",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check:web": "pnpm build && pnpm test",
+    "check:rust": "cargo fmt --manifest-path src-tauri/Cargo.toml --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --locked -- -D warnings && cargo test --manifest-path src-tauri/Cargo.toml --locked",
+    "check": "pnpm check:web && pnpm check:rust",
+    "build:app": "pnpm tauri build --bundles app --no-sign --ci -- --locked",
+    "package:macos-local": "bash scripts/package-macos-local.sh",
+    "tauri": "tauri"
+  },
+  "engines": {
+    "node": ">=22.11 <23",
+    "pnpm": ">=10 <11"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.11.1",
+    "lucide-react": "0.468.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.4",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "@vitejs/plugin-react": "4.7.0",
+    "jsdom": "25.0.1",
+    "typescript": "5.7.3",
+    "vite": "6.4.3",
+    "vitest": "3.2.7"
+  },
+  "packageManager": "pnpm@10.8.1"
+}
