@@ -9,12 +9,19 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 1
 fi
 
-for required_tool in pnpm node cargo codesign hdiutil ditto lipo shasum awk; do
+for required_tool in pnpm node cargo codesign hdiutil ditto lipo shasum awk grep; do
   if ! command -v "$required_tool" >/dev/null 2>&1; then
     echo "missing required tool: $required_tool" >&2
     exit 1
   fi
 done
+
+build_user_home="${HOME:?HOME must be set for release path remapping}"
+release_rustflags="${RUSTFLAGS:-}"
+if [[ -n "$release_rustflags" ]]; then
+  release_rustflags+=" "
+fi
+release_rustflags+="--remap-path-prefix=$build_user_home=/build/home"
 
 tauri_version="$(
   node --input-type=commonjs -p \
@@ -31,11 +38,16 @@ if [[ -z "$tauri_version" || "$tauri_version" != "$package_version" ||
   exit 1
 fi
 
-pnpm tauri build --bundles app --no-sign --ci -- --locked
+RUSTFLAGS="$release_rustflags" pnpm tauri build --bundles app --no-sign --ci -- --locked
 
 app_path="$project_root/src-tauri/target/release/bundle/macos/Ghostty Studio.app"
 if [[ ! -d "$app_path" ]]; then
   echo "expected app bundle was not produced: $app_path" >&2
+  exit 1
+fi
+
+if grep -R -a -l -F -- "$build_user_home/" "$app_path" >/dev/null 2>&1; then
+  echo "release bundle contains the local build home path" >&2
   exit 1
 fi
 
