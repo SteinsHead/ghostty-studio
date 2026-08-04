@@ -24,6 +24,15 @@ make settings easier to discover, preview, and change—without rewriting the re
 Everything stays on your machine. There is no account, cloud service, telemetry, or general-purpose
 shell and file access in the webview.
 
+## Download
+
+[Download Ghostty Studio v0.1.0](https://github.com/SteinsHead/ghostty-studio/releases/tag/v0.1.0)
+for Apple Silicon Macs running macOS 11 or later.
+
+This is an early preview. The app is ad-hoc signed but not Apple-notarized, so macOS may ask you to
+confirm the first launch. The release page includes a SHA-256 checksum; you can also build directly
+from source if you prefer.
+
 ## Project status
 
 Ghostty Studio is an early preview. The source is ready to explore, but a few limits are intentional:
@@ -31,7 +40,7 @@ Ghostty Studio is an early preview. The source is ready to explore, but a few li
 - The desktop app currently targets macOS and the writable contract is tested against Ghostty 1.3.1.
 - A small, reviewed set of visual settings is editable; the rest of the catalog remains discoverable
   and read-only until it has a purpose-built editor.
-- Public binaries are not yet Developer ID signed or notarized. Build from source for now.
+- The preview download is ad-hoc signed, not Developer ID signed or notarized.
 - The interface is currently available in Simplified Chinese; an English interface is planned.
 
 ## Run locally

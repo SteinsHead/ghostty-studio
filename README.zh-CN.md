@@ -24,13 +24,22 @@ Ghostty Studio 是我为自己做的本地桌面配置器：搜索设置、实�
 所有内容都留在本机。应用不需要账号，没有云服务和遥测，也不会给界面通用的 shell
 或文件访问能力。
 
+## 下载
+
+[下载 Ghostty Studio v0.1.0](https://github.com/SteinsHead/ghostty-studio/releases/tag/v0.1.0)，
+适用于 macOS 11 或更高版本的 Apple Silicon Mac。
+
+这是一个早期预览版。应用已做 ad-hoc 签名，但尚未经过 Apple 公证，所以 macOS 首次
+打开时可能要求你确认。Release 页面附有 SHA-256 校验值；如果你更在意构建过程，也可以
+直接从源码运行。
+
 ## 目前的状态
 
 Ghostty Studio 仍是早期预览版，当前边界很明确：
 
 - 桌面端目前以 macOS 为主，可写设置契约基于 Ghostty 1.3.1 测试。
 - 只有一小组经过确认的视觉设置可以编辑；其他设置仍可搜索和查看，后续会逐步加入合适的编辑器。
-- 暂时没有 Developer ID 签名和公证的公开安装包，建议从源码运行。
+- 预览安装包采用 ad-hoc 签名，尚未经过 Developer ID 签名和 Apple 公证。
 - 界面目前为简体中文，英文界面在计划中。
 
 ## 本地运行
