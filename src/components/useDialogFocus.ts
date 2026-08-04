@@ -24,6 +24,17 @@ export function useDialogFocus(onClose: () => void, closeDisabled = false) {
       : null;
     const initialFocus = dialog.querySelector<HTMLElement>("[data-dialog-initial-focus]");
     (initialFocus ?? dialog).focus();
+    const background = [...document.querySelectorAll<HTMLElement>(
+      ".app-shell > .sidebar, .app-shell > .workspace",
+    )].map((element) => ({
+      element,
+      inert: element.inert === true,
+      ariaHidden: element.getAttribute("aria-hidden"),
+    }));
+    for (const { element } of background) {
+      element.inert = true;
+      element.setAttribute("aria-hidden", "true");
+    }
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !closeDisabledRef.current) {
@@ -54,6 +65,11 @@ export function useDialogFocus(onClose: () => void, closeDisabled = false) {
     document.addEventListener("keydown", handleKeyDown);
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
+      for (const { element, inert, ariaHidden } of background) {
+        element.inert = inert;
+        if (ariaHidden === null) element.removeAttribute("aria-hidden");
+        else element.setAttribute("aria-hidden", ariaHidden);
+      }
       previousFocus?.focus();
     };
   }, []);

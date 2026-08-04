@@ -8,16 +8,19 @@
   [![License: MIT](https://img.shields.io/badge/License-MIT-a8ff60.svg)](LICENSE)
 </div>
 
-Ghostty is wonderfully configurable. Hunting through hundreds of options, editing a file, and
-restarting the terminal for every small visual tweak is less wonderful. I built Ghostty Studio to
-make settings easier to discover, preview, and change—without rewriting the rest of your config.
+Ghostty is wonderfully configurable. Hunting through hundreds of options and hand-editing a file
+for every small visual change is less wonderful. I built Ghostty Studio so you can open your usual
+config, adjust a setting, see what changed, and save with confidence—without rewriting the rest of
+the file.
 
 ## What it does
 
+- Opens your last-used config straight into the editor when there is nothing to decide.
 - Reads the settings catalog from the Ghostty version installed on your machine.
-- Finds macOS and XDG config files and shows where settings come from.
-- Lets you search, browse, and preview supported visual settings.
-- Shows the exact diff before saving.
+- Finds macOS and XDG config candidates, and asks you to choose only when more than one can be used.
+- Creates a new config safely, after confirmation, when no default config exists.
+- Lets you search and edit supported settings, with a contextual preview for visual changes.
+- Keeps every edit in a draft until you review the exact diff and choose to save.
 - Preserves comments, ordering, unknown keys, blank lines, BOM, CRLF, and trailing-newline style.
 - Validates with Ghostty and creates a local snapshot before every save.
 
@@ -26,7 +29,7 @@ shell and file access in the webview.
 
 ## Download
 
-[Download Ghostty Studio v0.1.0](https://github.com/SteinsHead/ghostty-studio/releases/tag/v0.1.0)
+[Download Ghostty Studio v0.2.0](https://github.com/SteinsHead/ghostty-studio/releases/tag/v0.2.0)
 for Apple Silicon Macs running macOS 11 or later.
 
 This is an early preview. The app is ad-hoc signed but not Apple-notarized, so macOS may ask you to
@@ -40,6 +43,10 @@ Ghostty Studio is an early preview. The source is ready to explore, but a few li
 - The desktop app currently targets macOS and the writable contract is tested against Ghostty 1.3.1.
 - A small, reviewed set of visual settings is editable; the rest of the catalog remains discoverable
   and read-only until it has a purpose-built editor.
+- The terminal preview is a safe DOM simulation, and the source graph does not yet calculate every
+  final effective value across includes, resets, and repeatable settings.
+- The extension manifest format and validator are developer-facing contracts for now. There is no
+  extension browser, installer, or execution surface in the app.
 - The preview download is ad-hoc signed, not Developer ID signed or notarized.
 - The interface is currently available in Simplified Chinese; an English interface is planned.
 
@@ -53,7 +60,7 @@ pnpm install --frozen-lockfile
 pnpm tauri dev
 ```
 
-To open the read-only browser demo instead:
+To open the read-only browser preview instead:
 
 ```bash
 pnpm dev
@@ -80,13 +87,21 @@ Ghostty Studio edits the existing document instead of regenerating it. A save on
 settings you reviewed. Before replacing the file, the app checks for outside changes, asks Ghostty
 to validate the candidate, and stores a restorable snapshot.
 
+If no default config exists, the app can create one fixed empty target. The backend re-discovers the
+target before and after confirmation and uses no-follow directory descriptors plus exclusive `0600`
+creation on Unix. If final validation becomes uncertain, it preserves the file and re-reads reality;
+it never risks deleting a concurrently replaced user file as an automatic cleanup step.
+
 The deeper design and security details live in the documentation:
 
 - [Architecture](docs/ARCHITECTURE.md)
+- [Product experience and platform boundaries](docs/PRODUCT_EXPERIENCE.md)
 - [Threat model](docs/THREAT_MODEL.md)
 - [Extension design](docs/EXTENSIONS.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Security policy](SECURITY.md)
+- [Changelog](CHANGELOG.md)
+- [Third-party notices](THIRD_PARTY_NOTICES.md)
 
 ## Contributing
 

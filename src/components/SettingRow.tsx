@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { RotateCcw } from "lucide-react";
+import { CircleMinus, Info, LockKeyhole, RotateCcw } from "lucide-react";
 import { copyForSetting } from "../settingCopy";
 import type { RuntimeOption } from "../types";
 import { SettingControl } from "./SettingControl";
@@ -9,6 +9,7 @@ interface SettingRowProps {
   value: string;
   baselineValue: string;
   configuredInEditingLayer: boolean;
+  effectiveValueKnown: boolean;
   sourceLabel: string;
   onValueChange(key: string, value: string): void;
   onReset(key: string, baselineValue: string): void;
@@ -19,6 +20,7 @@ export const SettingRow = memo(function SettingRow({
   value,
   baselineValue,
   configuredInEditingLayer,
+  effectiveValueKnown,
   sourceLabel,
   onValueChange,
   onReset,
@@ -35,36 +37,53 @@ export const SettingRow = memo(function SettingRow({
         ? "暂不支持编辑"
         : null;
   const copy = copyForSetting(option.key, option.description);
+  const descriptionId = `setting-${option.key}-description`;
+  const restrictionId = `setting-${option.key}-restriction`;
 
   return (
     <article className={`setting-row ${modified ? "setting-row--modified" : ""}`}>
       <div className="setting-copy">
         <div className="setting-title">
-          <code>{option.key}</code>
-          {modified && <span className="modified-dot">已修改</span>}
+          <strong className="setting-label">{copy.label}</strong>
+          {modified && <span className="modified-dot" aria-label="已修改" />}
           {restrictionLabel && (
-            <span className={option.risk === "sensitive" ? "risk-badge" : "policy-badge"}>
-              {restrictionLabel}
+            <span className="setting-restriction" id={restrictionId}>
+              <LockKeyhole size={12} />{restrictionLabel}
             </span>
           )}
         </div>
-        {copy.summary && <p className="setting-summary">{copy.summary}</p>}
-        {copy.detail && (
-          <details className="setting-details">
-            <summary>Ghostty 原文</summary>
-            <p>{copy.detail}</p>
-          </details>
-        )}
-        <div className="setting-meta">
-          <span>默认：{option.defaultValues.join(", ") || "未设置"}</span>
-          <span>{configuredInEditingLayer ? `当前文件：${sourceLabel}` : "当前文件：未设置"}</span>
-        </div>
+        {copy.summary && <p className="setting-summary" id={descriptionId}>{copy.summary}</p>}
+        <details className="setting-inspector">
+          <summary><Info size={12} /> 详细信息</summary>
+          <div className="setting-inspector__body">
+            <dl>
+              <div><dt>Ghostty 配置名</dt><dd><code>{option.key}</code></dd></div>
+              <div><dt>默认值</dt><dd>{option.defaultValues.join(", ") || "未设置"}</dd></div>
+              <div><dt>当前文件</dt><dd>{configuredInEditingLayer ? sourceLabel : "未显式设置"}</dd></div>
+            </dl>
+            {!effectiveValueKnown && <p>其他配置来源可能覆盖这里的值。</p>}
+            {copy.detail && <p>{copy.detail}</p>}
+            {configuredInEditingLayer && !requiresSpecialEditor && (
+              <button
+                type="button"
+                className="setting-unset"
+                disabled={value === ""}
+                onClick={() => onValueChange(option.key, "")}
+              >
+                <CircleMinus size={13} />
+                {value === "" ? "保存时从当前文件移除" : "从当前文件移除"}
+              </button>
+            )}
+          </div>
+        </details>
       </div>
       <div className="setting-input">
         <SettingControl
           option={option}
           value={value}
+          label={copy.label}
           disabled={requiresSpecialEditor}
+          describedBy={`${copy.summary ? descriptionId : ""} ${restrictionLabel ? restrictionId : ""}`.trim()}
           onChange={(nextValue) => onValueChange(option.key, nextValue)}
         />
         <button

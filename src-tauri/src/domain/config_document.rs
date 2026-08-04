@@ -184,6 +184,24 @@ impl ConfigDocument {
         Ok(())
     }
 
+    pub fn remove_scalar(&mut self, key: &str) -> Result<bool, CommandError> {
+        validate_edit(key, "")?;
+        let matching = self
+            .lines
+            .iter()
+            .enumerate()
+            .filter_map(|(index, line)| match &line.kind {
+                LineKind::Assignment { key: existing, .. } if existing == key => Some(index),
+                _ => None,
+            })
+            .next_back();
+        let Some(index) = matching else {
+            return Ok(false);
+        };
+        self.lines.remove(index);
+        Ok(true)
+    }
+
     pub fn duplicate_count(&self, key: &str) -> usize {
         self.lines
             .iter()
@@ -311,5 +329,25 @@ mod tests {
             .set_scalar("font-size", "13\ncommand = bad")
             .unwrap_err();
         assert_eq!(error.code, "invalid_value");
+    }
+
+    #[test]
+    fn removing_a_scalar_removes_the_assignment_not_just_its_value() {
+        let input = b"\xEF\xBB\xBF# keep\r\nfont-size = 13  \r\nbackground = 000000\r\n";
+        let mut document = ConfigDocument::parse(input).unwrap();
+
+        assert!(document.remove_scalar("font-size").unwrap());
+        assert_eq!(
+            document.render(),
+            b"\xEF\xBB\xBF# keep\r\nbackground = 000000\r\n"
+        );
+        assert!(!document.remove_scalar("font-size").unwrap());
+    }
+
+    #[test]
+    fn removing_the_last_line_preserves_the_previous_line_ending() {
+        let mut document = ConfigDocument::parse(b"font-size = 13\nbackground = 000000").unwrap();
+        document.remove_scalar("background").unwrap();
+        assert_eq!(document.render(), b"font-size = 13\n");
     }
 }

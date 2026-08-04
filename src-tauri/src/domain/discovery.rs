@@ -55,10 +55,17 @@ pub fn discover_config_candidates() -> Vec<ConfigCandidate> {
 
     specifications
         .into_iter()
+        // ConfigCandidate crosses a JSON boundary as a UTF-8 string. Excluding
+        // non-UTF-8 roots is safer than opening a different lossy path.
+        .filter(|(path, ..)| candidate_path_supported(path))
         .map(|(path, label, source, format, priority)| {
             candidate(path, label, source, format, priority)
         })
         .collect()
+}
+
+fn candidate_path_supported(path: &Path) -> bool {
+    path.to_str().is_some()
 }
 
 pub fn ghostty_executable_candidates() -> Vec<PathBuf> {
@@ -89,6 +96,9 @@ pub fn ghostty_executable_candidates() -> Vec<PathBuf> {
     candidates
         .into_iter()
         .filter(|path| seen.insert(path.clone()))
+        // GhosttyProbe is serialized as UTF-8 and later reopens this exact
+        // executable. Reject lossy identities instead of running another path.
+        .filter(|path| candidate_path_supported(path))
         .filter(|path| is_executable_file(path))
         .collect()
 }
@@ -191,5 +201,15 @@ mod tests {
         assert_eq!(first, path_id(path));
         assert!(!first.contains("Users"));
         assert!(first.starts_with("cfg-"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_candidate_paths_never_cross_the_string_boundary() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
+        let path = Path::new(OsStr::from_bytes(b"/tmp/ghostty-\xff/config"));
+        assert!(!candidate_path_supported(path));
     }
 }

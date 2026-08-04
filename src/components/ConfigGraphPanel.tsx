@@ -53,12 +53,12 @@ export function ConfigGraphPanel({ graph, onClose }: ConfigGraphPanelProps) {
             <span className="eyebrow"><Layers3 size={14} /> 加载关系</span>
             <h2 id="graph-title">配置来源</h2>
           </div>
-          <button className="icon-button" type="button" onClick={onClose} aria-label="关闭来源图">
+          <button className="icon-button" type="button" onClick={onClose} aria-label="关闭来源图" data-dialog-initial-focus>
             <X size={18} />
           </button>
         </header>
 
-        <div className="review-body" tabIndex={0} data-dialog-initial-focus aria-label="配置来源图内容">
+        <div className="review-body" tabIndex={0} aria-label="配置来源图内容">
           {!graph ? (
             <div className="loading-card">还没有加载来源信息。</div>
           ) : (
@@ -77,6 +77,13 @@ export function ConfigGraphPanel({ graph, onClose }: ConfigGraphPanelProps) {
 
               {!graph.complete && (
                 <div className="diagnostic"><AlertTriangle size={15} /><span>加载关系不完整：部分引用的配置文件无法读取。</span></div>
+              )}
+
+              {!graph.semanticsKnown && (
+                <div className="diagnostic" role="status">
+                  <AlertTriangle size={15} />
+                  <span>Ghostty 的完整合并语义尚未计算；这里的加载顺序与多文件来源仅供观察，不能代表最终生效值。</span>
+                </div>
               )}
 
               <section className="graph-section">

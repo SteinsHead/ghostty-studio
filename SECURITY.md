@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Ghostty Studio is still an early preview. Security fixes are made on the latest `0.1.x` revision;
+Ghostty Studio is still an early preview. Security fixes are made on the latest preview release;
 older commits are not maintained as separate release lines.
 
 ## Reporting a vulnerability

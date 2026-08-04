@@ -1,7 +1,7 @@
 use std::{
     fs::{self, File, OpenOptions},
     io::{Read, Write},
-    path::Path,
+    path::{Component, Path},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -25,6 +25,16 @@ pub struct WriteOutcome {
     pub revision: String,
     pub snapshot_id: String,
     pub warnings: Vec<String>,
+}
+
+#[derive(Debug)]
+pub struct CreateOutcome {
+    pub revision: String,
+    pub warnings: Vec<String>,
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -67,6 +77,364 @@ pub fn validate_candidate(
     temporary.as_file_mut().flush()?;
     temporary.as_file().sync_all()?;
     ghostty::validate_config(executable, temporary.path())
+}
+
+pub fn validate_empty_config(executable: &Path) -> Result<ValidationReport, CommandError> {
+    let temporary = NamedTempFile::new()?;
+    set_private_permissions(temporary.path())?;
+    temporary.as_file().sync_all()?;
+    ghostty::validate_config(executable, temporary.path())
+}
+
+pub fn preflight_new_config(target: &Path, allowed_root: &Path) -> Result<(), CommandError> {
+    if !target.is_absolute()
+        || !allowed_root.is_absolute()
+        || target
+            .components()
+            .any(|component| matches!(component, Component::ParentDir | Component::CurDir))
+        || !target.starts_with(allowed_root)
+    {
+        return Err(CommandError::new(
+            "creation_outside_approved_root",
+            "new configurations may only be created below their approved root",
+        ));
+    }
+    #[cfg(unix)]
+    {
+        let Some((parent, name)) = open_creation_parent(target, allowed_root, false)? else {
+            return Ok(());
+        };
+        ensure_target_absent(&parent, &name)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (target, allowed_root);
+        Err(CommandError::new(
+            "config_creation_not_supported",
+            "safe configuration creation is currently supported on Unix platforms only",
+        ))
+    }
+}
+
+pub fn create_new_config(
+    target: &Path,
+    allowed_root: &Path,
+) -> Result<CreateOutcome, CommandError> {
+    preflight_new_config(target, allowed_root)?;
+    #[cfg(unix)]
+    {
+        use std::os::fd::{AsRawFd, FromRawFd};
+        use std::os::unix::fs::MetadataExt;
+
+        let (parent, name) =
+            open_creation_parent(target, allowed_root, true)?.ok_or_else(|| {
+                CommandError::new(
+                    "invalid_creation_parent",
+                    "configuration parent could not be prepared",
+                )
+            })?;
+        ensure_target_absent(&parent, &name)?;
+        // SAFETY: parent is a live directory descriptor, name is NUL-free, and
+        // the returned descriptor is immediately owned by File exactly once.
+        let descriptor = unsafe {
+            libc::openat(
+                parent.as_raw_fd(),
+                name.as_ptr(),
+                libc::O_RDWR | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                0o600,
+            )
+        };
+        if descriptor < 0 {
+            let error = std::io::Error::last_os_error();
+            return Err(if error.kind() == std::io::ErrorKind::AlreadyExists {
+                CommandError::new(
+                    "config_already_exists",
+                    "another program created the configuration before commit",
+                )
+            } else {
+                CommandError::new(
+                    "config_creation_failed",
+                    format!("failed to create the configuration without overwriting: {error}"),
+                )
+            });
+        }
+        // SAFETY: openat returned a new owned descriptor on the success path.
+        let created = unsafe { File::from_raw_fd(descriptor) };
+        use std::os::unix::fs::PermissionsExt;
+        created.set_permissions(fs::Permissions::from_mode(0o600))?;
+        created.sync_all()?;
+        let created_metadata = created.metadata()?;
+        if !created_metadata.is_file()
+            || created_metadata.nlink() != 1
+            || created_metadata.len() != 0
+        {
+            return Err(CommandError::new(
+                "post_creation_unverified",
+                "the newly created target is not the expected empty regular file",
+            ));
+        }
+
+        let mut warnings = Vec::new();
+        if let Err(error) = parent.sync_all() {
+            warnings.push(format!(
+                "配置文件已创建，但父目录 fsync 失败，断电耐久性未确认：{error}"
+            ));
+        }
+        let visible_metadata = fs::symlink_metadata(target).map_err(|error| {
+            CommandError::new(
+                "post_creation_unverified",
+                format!("the created file is no longer reachable at the issued path: {error}"),
+            )
+        })?;
+        if visible_metadata.file_type().is_symlink()
+            || !visible_metadata.is_file()
+            || visible_metadata.dev() != created_metadata.dev()
+            || visible_metadata.ino() != created_metadata.ino()
+        {
+            return Err(CommandError::new(
+                "post_creation_conflict",
+                "the issued path no longer names the file created by Ghostty Studio; no newer path was overwritten",
+            ));
+        }
+        let written = read_regular_target_file(target).map_err(|error| {
+            CommandError::new(
+                "post_creation_unverified",
+                format!(
+                    "the configuration was created but could not be read back: {}",
+                    error.message
+                ),
+            )
+        })?;
+        if !written.is_empty() {
+            return Err(CommandError::new(
+                "post_creation_conflict",
+                "the new configuration was edited before verification; the newer content was kept",
+            ));
+        }
+        Ok(CreateOutcome {
+            revision: revision(&written),
+            warnings,
+            device: created_metadata.dev(),
+            inode: created_metadata.ino(),
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (target, allowed_root);
+        Err(CommandError::new(
+            "config_creation_not_supported",
+            "safe configuration creation is currently supported on Unix platforms only",
+        ))
+    }
+}
+
+#[cfg(unix)]
+fn open_creation_parent(
+    target: &Path,
+    allowed_root: &Path,
+    create_missing: bool,
+) -> Result<Option<(File, std::ffi::CString)>, CommandError> {
+    use std::ffi::{CString, OsStr};
+    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let relative = target.strip_prefix(allowed_root).map_err(|_| {
+        CommandError::new(
+            "creation_outside_approved_root",
+            "the issued configuration path is outside its approved root",
+        )
+    })?;
+    let components = relative
+        .components()
+        .map(|component| match component {
+            Component::Normal(value) => Ok(value),
+            _ => Err(CommandError::new(
+                "invalid_target",
+                "configuration creation requires a normalized relative path",
+            )),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let (file_name, directories) = components.split_last().ok_or_else(|| {
+        CommandError::new(
+            "invalid_target",
+            "configuration target cannot be the approved root itself",
+        )
+    })?;
+    let name = c_string(file_name)?;
+    let mut root_options = OpenOptions::new();
+    root_options
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    let mut current = root_options.open(allowed_root).map_err(|error| {
+        CommandError::new(
+            "invalid_creation_root",
+            format!("the approved configuration root is unavailable or unsafe: {error}"),
+        )
+    })?;
+
+    for directory in directories {
+        let directory_name = c_string(directory)?;
+        match open_directory_at(&current, &directory_name) {
+            Ok(next) => current = next,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && !create_missing => {
+                return Ok(None);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                // SAFETY: current is a live directory descriptor and the name
+                // is a single, normalized, NUL-free path component.
+                let created =
+                    unsafe { libc::mkdirat(current.as_raw_fd(), directory_name.as_ptr(), 0o700) };
+                if created != 0 {
+                    let mkdir_error = std::io::Error::last_os_error();
+                    if mkdir_error.kind() != std::io::ErrorKind::AlreadyExists {
+                        return Err(CommandError::new(
+                            "config_creation_failed",
+                            format!("failed to create a configuration directory: {mkdir_error}"),
+                        ));
+                    }
+                }
+                let next = open_directory_at(&current, &directory_name).map_err(|open_error| {
+                    CommandError::new(
+                        "invalid_creation_parent",
+                        format!("a configuration parent is unavailable or unsafe: {open_error}"),
+                    )
+                })?;
+                current.sync_all()?;
+                current = next;
+            }
+            Err(error) => {
+                return Err(CommandError::new(
+                    "invalid_creation_parent",
+                    format!("a configuration parent is unavailable or unsafe: {error}"),
+                ));
+            }
+        }
+    }
+    return Ok(Some((current, name)));
+
+    fn c_string(value: &OsStr) -> Result<CString, CommandError> {
+        CString::new(value.as_bytes()).map_err(|_| {
+            CommandError::new("invalid_target", "configuration path contains a NUL byte")
+        })
+    }
+
+    fn open_directory_at(parent: &File, name: &CString) -> std::io::Result<File> {
+        // SAFETY: parent is a live directory descriptor and name is NUL-free.
+        let descriptor = unsafe {
+            libc::openat(
+                parent.as_raw_fd(),
+                name.as_ptr(),
+                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            )
+        };
+        if descriptor < 0 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            // SAFETY: openat returned a new owned descriptor on success.
+            Ok(unsafe { File::from_raw_fd(descriptor) })
+        }
+    }
+}
+
+#[cfg(unix)]
+pub fn verify_created_config(
+    target: &Path,
+    allowed_root: &Path,
+    outcome: &CreateOutcome,
+) -> Result<(), CommandError> {
+    use std::os::unix::fs::MetadataExt;
+
+    let (parent, name) = open_creation_parent(target, allowed_root, false)?.ok_or_else(|| {
+        CommandError::new(
+            "post_creation_unverified",
+            "the configuration parent disappeared after creation",
+        )
+    })?;
+    let file = open_regular_file_at(&parent, &name)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file()
+        || metadata.nlink() != 1
+        || metadata.len() != 0
+        || metadata.dev() != outcome.device
+        || metadata.ino() != outcome.inode
+    {
+        return Err(CommandError::new(
+            "post_creation_conflict",
+            "the issued path no longer names the unchanged file created by Ghostty Studio",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+pub fn verify_created_config(
+    _target: &Path,
+    _allowed_root: &Path,
+    _outcome: &CreateOutcome,
+) -> Result<(), CommandError> {
+    Err(CommandError::new(
+        "config_creation_not_supported",
+        "safe configuration creation is currently supported on Unix platforms only",
+    ))
+}
+
+#[cfg(unix)]
+fn open_regular_file_at(parent: &File, name: &std::ffi::CString) -> Result<File, CommandError> {
+    use std::os::fd::{AsRawFd, FromRawFd};
+
+    // SAFETY: parent is a live directory descriptor and name is NUL-free.
+    let descriptor = unsafe {
+        libc::openat(
+            parent.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK,
+        )
+    };
+    if descriptor < 0 {
+        return Err(CommandError::new(
+            "post_creation_unverified",
+            format!(
+                "could not reopen the created configuration safely: {}",
+                std::io::Error::last_os_error()
+            ),
+        ));
+    }
+    // SAFETY: openat returned a new owned descriptor on success.
+    Ok(unsafe { File::from_raw_fd(descriptor) })
+}
+
+#[cfg(unix)]
+fn ensure_target_absent(parent: &File, name: &std::ffi::CString) -> Result<(), CommandError> {
+    use std::mem::MaybeUninit;
+    use std::os::fd::AsRawFd;
+
+    let mut metadata = MaybeUninit::<libc::stat>::uninit();
+    // SAFETY: metadata points to writable storage, parent is live, and name is
+    // NUL-free. fstatat initializes metadata only on its success path.
+    let result = unsafe {
+        libc::fstatat(
+            parent.as_raw_fd(),
+            name.as_ptr(),
+            metadata.as_mut_ptr(),
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    };
+    if result == 0 {
+        return Err(CommandError::new(
+            "config_already_exists",
+            "the configuration target now exists; reload before choosing it",
+        ));
+    }
+    let error = std::io::Error::last_os_error();
+    if error.kind() == std::io::ErrorKind::NotFound {
+        Ok(())
+    } else {
+        Err(CommandError::new(
+            "config_creation_failed",
+            format!("could not verify that the configuration target is absent: {error}"),
+        ))
+    }
 }
 
 pub fn write_atomically(
@@ -599,6 +967,120 @@ fn hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    fn validator(directory: &Path, success: bool) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = directory.join(format!("validator-{}", Uuid::new_v4()));
+        fs::write(
+            &path,
+            format!("#!/bin/sh\nexit {}\n", if success { 0 } else { 1 }),
+        )
+        .unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+        path
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn new_config_creation_is_private_validated_and_never_overwrites() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("home");
+        fs::create_dir(&root).unwrap();
+        let executable = validator(directory.path(), true);
+        let target = root.join(".config/ghostty/config");
+
+        assert!(validate_empty_config(&executable).unwrap().valid);
+        let outcome = create_new_config(&target, &root).unwrap();
+        assert_eq!(outcome.revision, revision(b""));
+        assert_eq!(fs::read(&target).unwrap(), b"");
+        assert_eq!(
+            fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(
+            fs::metadata(root.join(".config"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        assert_eq!(
+            fs::metadata(root.join(".config/ghostty"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+
+        let error = create_new_config(&target, &root).unwrap_err();
+        assert_eq!(error.code, "config_already_exists");
+        assert_eq!(fs::read(&target).unwrap(), b"");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn new_config_verification_detects_external_changes_without_deleting_them() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("home");
+        fs::create_dir(&root).unwrap();
+
+        let edited_target = root.join(".config/ghostty/config");
+        let edited_outcome = create_new_config(&edited_target, &root).unwrap();
+        verify_created_config(&edited_target, &root, &edited_outcome).unwrap();
+        fs::write(&edited_target, b"font-size = 15\n").unwrap();
+        let error = verify_created_config(&edited_target, &root, &edited_outcome).unwrap_err();
+        assert_eq!(error.code, "post_creation_conflict");
+        assert_eq!(fs::read(&edited_target).unwrap(), b"font-size = 15\n");
+
+        let replaced_target = root.join(".config/ghostty/config.ghostty");
+        let replaced_outcome = create_new_config(&replaced_target, &root).unwrap();
+        let replacement = root.join(".config/ghostty/replacement");
+        fs::write(&replacement, b"").unwrap();
+        fs::rename(&replacement, &replaced_target).unwrap();
+        let error = verify_created_config(&replaced_target, &root, &replaced_outcome).unwrap_err();
+        assert_eq!(error.code, "post_creation_conflict");
+        assert_eq!(fs::read(&replaced_target).unwrap(), b"");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn new_config_creation_refuses_symlinked_parents_and_outside_paths() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("home");
+        let outside = directory.path().join("outside");
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(&outside).unwrap();
+        symlink(&outside, root.join(".config")).unwrap();
+
+        let error = create_new_config(&root.join(".config/ghostty/config"), &root).unwrap_err();
+        assert_eq!(error.code, "invalid_creation_parent");
+        assert!(!outside.join("ghostty/config").exists());
+
+        let error = create_new_config(&outside.join("ghostty/config"), &root).unwrap_err();
+        assert_eq!(error.code, "creation_outside_approved_root");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_new_config_validation_leaves_no_target_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("home");
+        fs::create_dir(&root).unwrap();
+        let executable = validator(directory.path(), false);
+        let target = root.join(".config/ghostty/config");
+
+        let validation = validate_empty_config(&executable).unwrap();
+        assert!(!validation.valid);
+        assert!(!target.exists());
+    }
 
     #[test]
     fn atomic_write_detects_stale_revision_and_preserves_external_edit() {

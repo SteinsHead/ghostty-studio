@@ -5,6 +5,7 @@ fn main() {
         "inspect_extension_manifest",
         "load_config_graph",
         "open_config",
+        "create_config",
         "stage_changes",
         "apply_changes",
         "list_snapshots",

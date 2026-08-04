@@ -96,12 +96,13 @@ export function SnapshotHistoryPanel({
             disabled={restoring}
             onClick={onClose}
             aria-label="关闭快照历史"
+            data-dialog-initial-focus
           >
             <X size={18} />
           </button>
         </header>
 
-        <div className="review-body" tabIndex={0} data-dialog-initial-focus aria-label="快照历史内容">
+        <div className="review-body" tabIndex={0} aria-label="快照历史内容">
           {readOnly && (
             <div className="history-demo-note">
               <LockKeyhole size={16} />

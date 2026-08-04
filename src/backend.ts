@@ -8,6 +8,7 @@ import type {
   ConfigSession,
   DraftChange,
   EnvironmentReport,
+  ExtensionInspection,
   RuntimeSchema,
   SnapshotInfo,
 } from "./types";
@@ -25,8 +26,16 @@ class TauriBackend implements Backend {
     return invoke("load_config_graph");
   }
 
+  inspectExtensionManifest(manifest: string): Promise<ExtensionInspection> {
+    return invoke("inspect_extension_manifest", { manifest });
+  }
+
   openConfig(candidateId: string): Promise<ConfigSession> {
     return invoke("open_config", { candidateId });
+  }
+
+  createConfig(candidateId: string): Promise<ConfigSession> {
+    return invoke("create_config", { candidateId });
   }
 
   stageChanges(
@@ -117,6 +126,41 @@ class BrowserDemoBackend implements Backend {
     };
   }
 
+  async inspectExtensionManifest(manifest: string): Promise<ExtensionInspection> {
+    if (manifest.length > 512 * 1024) {
+      throw new Error("扩展清单超过 512 KiB 限制");
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(manifest);
+    } catch {
+      throw new Error("扩展清单不是有效的 JSON");
+    }
+    if (!parsed || typeof parsed !== "object") {
+      throw new Error("扩展清单必须是 JSON 对象");
+    }
+    const record = parsed as Record<string, unknown>;
+    if (record.manifestVersion !== 1) {
+      throw new Error("浏览器演示仅支持 manifestVersion 1");
+    }
+    const contributes = record.contributes && typeof record.contributes === "object"
+      ? record.contributes as Record<string, unknown>
+      : {};
+    const listLength = (value: unknown) => Array.isArray(value) ? value.length : 0;
+    return {
+      id: typeof record.id === "string" ? record.id : "demo.invalid",
+      name: typeof record.name === "string" ? record.name : "未命名扩展",
+      version: typeof record.version === "string" ? record.version : "0.0.0",
+      capabilities: Array.isArray(record.capabilities)
+        ? record.capabilities.filter((item): item is string => typeof item === "string")
+        : [],
+      settingCount: listLength(contributes.settings),
+      presetCount: listLength(contributes.presets),
+      migrationCount: listLength(contributes.migrations),
+      trusted: false,
+    };
+  }
+
   async openConfig(candidateId: string): Promise<ConfigSession> {
     const candidate = demoEnvironment.candidates.find((item) => item.id === candidateId);
     if (!candidate) throw new Error("Unknown demo config candidate");
@@ -131,6 +175,10 @@ class BrowserDemoBackend implements Backend {
       ),
       diagnostics: ["浏览器预览模式固定为只读。请运行 Tauri 应用以访问本地文件。"],
     };
+  }
+
+  async createConfig(_candidateId: string): Promise<ConfigSession> {
+    throw new Error("浏览器演示模式不会创建本地配置文件");
   }
 
   async stageChanges(

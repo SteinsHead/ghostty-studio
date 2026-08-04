@@ -8,7 +8,8 @@ describe("setting copy", () => {
       "The opacity level of the background. A value of 1 is fully opaque.",
     );
 
-    expect(copy.summary).toBe("背景不透明度：0 为完全透明，1 为完全不透明。");
+    expect(copy.label).toBe("背景不透明度");
+    expect(copy.summary).toBe("控制背景可见程度；0% 完全透明，100% 完全不透明。");
     expect(copy.detail).toContain("The opacity level");
   });
 
@@ -21,6 +22,7 @@ describe("setting copy", () => {
 
   it("keeps a short official description when no translation exists", () => {
     expect(copyForSetting("future-setting", "A short description.")).toEqual({
+      label: "future-setting",
       summary: "A short description.",
       detail: null,
     });
@@ -38,6 +40,7 @@ describe("setting copy", () => {
 
   it("does not invent copy for undocumented settings", () => {
     expect(copyForSetting("future-setting", "   ")).toEqual({
+      label: "future-setting",
       summary: null,
       detail: null,
     });

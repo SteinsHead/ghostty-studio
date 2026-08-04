@@ -36,6 +36,7 @@ function SliderHarness({ onInput }: { onInput(value: string): void }) {
         value={value}
         baselineValue="1"
         configuredInEditingLayer={false}
+        effectiveValueKnown={false}
         sourceLabel="测试配置层"
         onValueChange={(_key, nextValue) => {
           onInput(nextValue);
@@ -116,7 +117,7 @@ describe("opacity preview stability", () => {
       });
 
       expect(rangeNode.value).toBe(value);
-      expect(number!.value).toBe(value);
+      expect(number!.value).toBe(String(Math.round(Number(value) * 100)));
       expect(container.querySelector(".terminal-screen")).toBe(screenNode);
       expect(screenNode.firstElementChild).toBe(firstLine);
       expect(screenNode.style.backgroundColor).toMatch(/^rgb\(/);
@@ -144,8 +145,24 @@ describe("opacity preview stability", () => {
     expect(range?.max).toBe("1");
     expect(range?.step).toBe("0.01");
     expect(number?.min).toBe("0");
-    expect(number?.max).toBe("1");
-    expect(number?.step).toBe("0.01");
+    expect(number?.max).toBe("100");
+    expect(number?.step).toBe("1");
+  });
+
+  it("shows a human percentage while keeping Ghostty's 0-1 value contract", () => {
+    const onChange = vi.fn();
+    act(() => root.render(
+      <SettingControl option={opacityOption} value="0.9" onChange={onChange} />,
+    ));
+
+    const number = container.querySelector<HTMLInputElement>('input[type="number"]')!;
+    expect(number.value).toBe("90");
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setter.call(number, "88");
+      number.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(onChange).toHaveBeenLastCalledWith("0.88");
   });
 
   it("does not add a range to ordinary numeric controls", () => {
@@ -154,5 +171,24 @@ describe("opacity preview stability", () => {
     ));
 
     expect(container.querySelector('input[type="range"]')).toBeNull();
+  });
+
+  it("marks an assignment for removal instead of writing an empty value", () => {
+    const onValueChange = vi.fn();
+    act(() => root.render(
+      <SettingRow
+        option={opacityOption}
+        value="0.9"
+        baselineValue="0.9"
+        configuredInEditingLayer
+        effectiveValueKnown={false}
+        sourceLabel="测试配置层"
+        onValueChange={onValueChange}
+        onReset={() => undefined}
+      />,
+    ));
+
+    act(() => container.querySelector<HTMLButtonElement>(".setting-unset")!.click());
+    expect(onValueChange).toHaveBeenCalledWith("background-opacity", "");
   });
 });

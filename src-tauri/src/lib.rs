@@ -49,7 +49,6 @@ struct StagedCandidate {
 struct PreparedSnapshotRestore {
     current_bytes: Vec<u8>,
     restored_bytes: Vec<u8>,
-    restored_document: ConfigDocument,
     validation: ghostty::ValidationReport,
     snapshot: safe_write::SnapshotInfo,
     changed_keys: Vec<String>,
@@ -163,30 +162,39 @@ fn inspect_extension_manifest(
             "extension manifest exceeds the 512 KiB limit",
         ));
     }
-    let cached_keys = state
+    let cached_schema = state
         .runtime_schema
         .lock()
         .map_err(|_| CommandError::new("state_poisoned", "schema state is unavailable"))?
-        .as_ref()
-        .map(|schema| {
+        .clone();
+    let (core_keys, installed_version) = match cached_schema {
+        Some(schema) => (
             schema
                 .options
                 .iter()
                 .map(|option| option.key.clone())
-                .collect::<HashSet<_>>()
-        });
-    let core_keys = match cached_keys {
-        Some(keys) => keys,
-        None => match ghostty::locate() {
-            Some(executable) => schema::load(&executable, None)?
-                .options
-                .into_iter()
-                .map(|option| option.key)
-                .collect(),
-            None => HashSet::new(),
-        },
+                .collect::<HashSet<_>>(),
+            schema.ghostty_version,
+        ),
+        None => {
+            let probe = ghostty::probe();
+            let keys = match probe.executable_path.as_deref().map(PathBuf::from) {
+                Some(executable) => schema::load(&executable, probe.version.clone())?
+                    .options
+                    .into_iter()
+                    .map(|option| option.key)
+                    .collect(),
+                None => HashSet::new(),
+            };
+            (keys, probe.version)
+        }
     };
-    extension::validate_manifest(manifest.as_bytes(), false, &core_keys)
+    extension::validate_manifest(
+        manifest.as_bytes(),
+        false,
+        &core_keys,
+        installed_version.as_deref(),
+    )
 }
 
 #[tauri::command]
@@ -268,6 +276,13 @@ fn open_config(
     state: State<'_, AppState>,
 ) -> Result<ConfigSession, CommandError> {
     let _mutation_guard = acquire_mutation(&state)?;
+    open_config_session(&candidate_id, &state)
+}
+
+fn open_config_session(
+    candidate_id: &str,
+    state: &AppState,
+) -> Result<ConfigSession, CommandError> {
     if candidate_id.len() > 128 {
         return Err(CommandError::new(
             "invalid_candidate",
@@ -278,7 +293,7 @@ fn open_config(
         .candidates
         .lock()
         .map_err(|_| CommandError::new("state_poisoned", "candidate state is unavailable"))?
-        .get(&candidate_id)
+        .get(candidate_id)
         .cloned()
         .ok_or_else(|| {
             CommandError::new(
@@ -302,7 +317,7 @@ fn open_config(
     let revision = revision(&bytes);
     let session_id = Uuid::new_v4().to_string();
     let read_only = !candidate.writable || candidate.symlink;
-    let safe_keys = editable_scalar_keys(&state)?;
+    let safe_keys = editable_scalar_keys(state)?;
     let all_values = document.values();
     let hidden_value_count = all_values
         .keys()
@@ -323,7 +338,7 @@ fn open_config(
         ));
     }
     let opened = OpenSession {
-        candidate_id: candidate_id.clone(),
+        candidate_id: candidate_id.to_string(),
         path: path.clone(),
         revision: revision.clone(),
         read_only,
@@ -352,13 +367,299 @@ fn open_config(
 
     Ok(ConfigSession {
         id: session_id,
-        candidate_id,
+        candidate_id: candidate_id.to_string(),
         path: display_path(&path),
         revision,
         read_only,
         values,
         diagnostics,
     })
+}
+
+#[tauri::command]
+async fn create_config(
+    candidate_id: String,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<ConfigSession, CommandError> {
+    let _mutation_guard = acquire_mutation(&state)?;
+    if candidate_id.len() > 128 {
+        return Err(CommandError::new(
+            "invalid_candidate",
+            "candidate id is too long",
+        ));
+    }
+    let issued_candidate = state
+        .candidates
+        .lock()
+        .map_err(|_| CommandError::new("state_poisoned", "candidate state is unavailable"))?
+        .get(&candidate_id)
+        .cloned()
+        .ok_or_else(|| {
+            CommandError::new(
+                "unknown_candidate",
+                "configuration candidate was not issued by this application session",
+            )
+        })?;
+    let candidate = fresh_creation_candidate(&candidate_id, &issued_candidate)?;
+    let contract = current_runtime_contract(&state)?;
+    let path = PathBuf::from(&candidate.path);
+    let home = creation_root_for(&candidate, &path)?;
+    safe_write::preflight_new_config(&path, &home)?;
+    require_valid_empty_config(&contract.executable)?;
+    let baseline = ghostty::validate_default_config(&contract.executable)?;
+    if !baseline.valid {
+        return Err(CommandError::new(
+            "baseline_validation_failed",
+            "Ghostty's current default configuration is already invalid; no file was created",
+        ));
+    }
+    let visible_path = display_path(&path);
+    require_native_confirmation(
+        &app,
+        format!(
+            "将在 {visible_path} 创建一个 0 字节的 Ghostty 配置文件。\n\n新目录权限为 0700，文件权限为 0600。若另一个程序先创建目标，Ghostty Studio 会停止，绝不会覆盖。"
+        ),
+        "创建配置",
+    )
+    .await?;
+    let confirmed_candidate = fresh_creation_candidate(&candidate_id, &issued_candidate)?;
+    if confirmed_candidate.path != candidate.path {
+        return Err(CommandError::new(
+            "candidate_changed",
+            "the issued configuration target changed while confirmation was open",
+        ));
+    }
+    let confirmed_contract = current_runtime_contract(&state)?;
+    require_valid_empty_config(&confirmed_contract.executable)?;
+    safe_write::preflight_new_config(&path, &home)?;
+    let outcome = match safe_write::create_new_config(&path, &home) {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            // openat may already have created the file before chmod/fsync or a
+            // readback failed. Always reconcile instead of inferring the phase
+            // from an I/O error code.
+            reconcile_state_after_creation_failure(&state)?;
+            return Err(error);
+        }
+    };
+
+    let result = (|| {
+        let final_validation = ghostty::validate_default_config(&confirmed_contract.executable);
+        let validation_failure = match final_validation {
+            Ok(report) if report.valid => None,
+            Ok(_) => {
+                Some("the complete Ghostty configuration was rejected after creation".to_string())
+            }
+            Err(error) => Some(format!(
+                "the complete Ghostty configuration could not be validated after creation: {}",
+                error.message
+            )),
+        };
+        if let Some(failure) = validation_failure {
+            safe_write::verify_created_config(&path, &home, &outcome)?;
+            return Err(CommandError::new(
+                "post_creation_validation_failed",
+                format!(
+                    "{failure}; the unchanged empty file was intentionally preserved because portable POSIX deletion cannot atomically prove inode identity"
+                ),
+            ));
+        }
+        safe_write::verify_created_config(&path, &home, &outcome)?;
+
+        let discovered = discovery::discover_config_candidates();
+        let created =
+            require_unique_created_candidate(&discovered, &candidate_id, &candidate.path)?;
+        if created.symlink || created.size_bytes != Some(0) {
+            return Err(CommandError::new(
+                "post_creation_conflict",
+                "the created configuration no longer has the expected file identity",
+            ));
+        }
+        replace_discovered_candidates(&state, discovered)?;
+        state
+            .sessions
+            .lock()
+            .map_err(|_| CommandError::new("state_poisoned", "session state is unavailable"))?
+            .clear();
+        state
+            .stages
+            .lock()
+            .map_err(|_| CommandError::new("state_poisoned", "stage state is unavailable"))?
+            .clear();
+        let mut session = open_config_session(&candidate_id, &state)?;
+        if session.revision != outcome.revision {
+            return Err(CommandError::new(
+                "post_creation_conflict",
+                "the new configuration changed before the editing session opened; the newer file was kept",
+            ));
+        }
+        session
+            .diagnostics
+            .push("已创建空白配置；首次保存前仍会再次验证并创建快照。".to_string());
+        session.diagnostics.extend(baseline.diagnostics);
+        session.diagnostics.extend(outcome.warnings);
+        Ok(session)
+    })();
+
+    if result.is_err() {
+        reconcile_state_after_creation_failure(&state)?;
+    }
+    result
+}
+
+fn fresh_creation_candidate(
+    candidate_id: &str,
+    issued: &ConfigCandidate,
+) -> Result<ConfigCandidate, CommandError> {
+    let candidates = discovery::discover_config_candidates();
+    if candidates.iter().any(|candidate| candidate.exists) {
+        return Err(CommandError::new(
+            "existing_config_prevents_creation",
+            "a default Ghostty configuration already exists; v1 creation will not add another layer",
+        ));
+    }
+    let fresh = candidates
+        .into_iter()
+        .find(|candidate| candidate.id == candidate_id)
+        .ok_or_else(|| {
+            CommandError::new(
+                "unknown_candidate",
+                "the issued configuration candidate is no longer discoverable",
+            )
+        })?;
+    if fresh.path != issued.path
+        || fresh.source != issued.source
+        || fresh.format != issued.format
+        || fresh.label != issued.label
+        || fresh.exists
+        || fresh.symlink
+        || !fresh.writable
+    {
+        return Err(CommandError::new(
+            "candidate_changed",
+            "the configuration candidate changed and is no longer eligible for creation",
+        ));
+    }
+    Ok(fresh)
+}
+
+fn require_unique_created_candidate<'a>(
+    candidates: &'a [ConfigCandidate],
+    candidate_id: &str,
+    candidate_path: &str,
+) -> Result<&'a ConfigCandidate, CommandError> {
+    let mut existing = candidates.iter().filter(|candidate| candidate.exists);
+    let created = existing.next().ok_or_else(|| {
+        CommandError::new(
+            "post_creation_unverified",
+            "fresh discovery did not find the newly created configuration",
+        )
+    })?;
+    if existing.next().is_some() {
+        return Err(CommandError::new(
+            "post_creation_conflict",
+            "another default configuration layer appeared during creation; all files were preserved",
+        ));
+    }
+    if created.id != candidate_id || created.path != candidate_path {
+        return Err(CommandError::new(
+            "post_creation_conflict",
+            "fresh discovery found a different default configuration layer; all files were preserved",
+        ));
+    }
+    Ok(created)
+}
+
+fn creation_root_for(candidate: &ConfigCandidate, target: &Path) -> Result<PathBuf, CommandError> {
+    let home = std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| {
+        CommandError::new(
+            "home_unavailable",
+            "the user home is unavailable; configuration creation is disabled",
+        )
+    })?;
+    if home.to_str().is_none() {
+        return Err(CommandError::new(
+            "non_utf8_config_root",
+            "automatic creation is disabled because HOME cannot cross the UTF-8 application boundary without loss",
+        ));
+    }
+    if std::env::var_os("XDG_CONFIG_HOME")
+        .as_deref()
+        .is_some_and(|value| value.to_str().is_none())
+    {
+        return Err(CommandError::new(
+            "non_utf8_config_root",
+            "automatic creation is disabled because XDG_CONFIG_HOME cannot be represented without changing its bytes",
+        ));
+    }
+    if candidate.source == "xdg" {
+        if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from) {
+            if !xdg.is_absolute() {
+                return Err(CommandError::new(
+                    "relative_xdg_config_home",
+                    "automatic creation ignores a relative XDG_CONFIG_HOME",
+                ));
+            }
+            if !xdg.starts_with(&home) {
+                return Err(CommandError::new(
+                    "creation_outside_approved_root",
+                    "v1 requires manual creation when XDG_CONFIG_HOME is outside the user home",
+                ));
+            }
+        }
+    }
+    if !target.starts_with(&home) {
+        return Err(CommandError::new(
+            "creation_outside_approved_root",
+            "v1 only creates default Ghostty configurations inside the user home",
+        ));
+    }
+    Ok(home)
+}
+
+fn require_valid_empty_config(executable: &Path) -> Result<(), CommandError> {
+    let validation = safe_write::validate_empty_config(executable)?;
+    if validation.valid {
+        Ok(())
+    } else {
+        Err(CommandError::new(
+            "validation_failed",
+            "Ghostty rejected an empty candidate; no configuration file was created",
+        ))
+    }
+}
+
+fn replace_discovered_candidates(
+    state: &AppState,
+    candidates: Vec<ConfigCandidate>,
+) -> Result<(), CommandError> {
+    let mut store = state
+        .candidates
+        .lock()
+        .map_err(|_| CommandError::new("state_poisoned", "candidate state is unavailable"))?;
+    store.clear();
+    store.extend(
+        candidates
+            .into_iter()
+            .map(|candidate| (candidate.id.clone(), candidate)),
+    );
+    Ok(())
+}
+
+fn reconcile_state_after_creation_failure(state: &AppState) -> Result<(), CommandError> {
+    replace_discovered_candidates(state, discovery::discover_config_candidates())?;
+    state
+        .sessions
+        .lock()
+        .map_err(|_| CommandError::new("state_poisoned", "session state is unavailable"))?
+        .clear();
+    state
+        .stages
+        .lock()
+        .map_err(|_| CommandError::new("state_poisoned", "stage state is unavailable"))?
+        .clear();
+    Ok(())
 }
 
 #[tauri::command]
@@ -452,16 +753,30 @@ fn stage_changes(
             .remove(&change.key)
             .unwrap_or_default();
         let next = change.after.first().cloned().unwrap_or_default();
-        candidate_document.set_scalar(&change.key, &next)?;
+        if next.is_empty() {
+            candidate_document.remove_scalar(&change.key)?;
+        } else {
+            candidate_document.set_scalar(&change.key, &next)?;
+        }
+        let after = if next.is_empty() {
+            Vec::new()
+        } else {
+            vec![next]
+        };
+        if before == after {
+            continue;
+        }
         trusted_changes.push(DraftChange {
             key: change.key,
             before,
-            after: if next.is_empty() {
-                Vec::new()
-            } else {
-                vec![next]
-            },
+            after,
         });
+    }
+    if trusted_changes.is_empty() {
+        return Err(CommandError::new(
+            "no_effective_changes",
+            "the requested draft does not change the selected configuration file",
+        ));
     }
     let candidate_bytes = candidate_document.render();
     if candidate_bytes.len() > 4 * 1024 * 1024 {
@@ -580,7 +895,6 @@ async fn apply_changes(
         ));
     }
     let data_root = app_data_root(&app)?;
-    let new_document = ConfigDocument::parse(&stage.bytes)?;
     let outcome = write_for_open_session(&data_root, &state, &session_id, &session, &stage.bytes)?;
 
     let final_validation = ghostty::validate_default_config(&contract.executable);
@@ -609,18 +923,13 @@ async fn apply_changes(
         ));
     }
 
-    replace_open_session(
-        &state,
-        &session_id,
-        &session,
-        stage.bytes.clone(),
-        new_document,
-    )?;
+    let committed_revision =
+        refresh_session_after_verified_write(&state, &session_id, &session, &outcome.revision)?;
 
     let mut diagnostics = stage.diagnostics;
     diagnostics.push(format!("已应用 {} 项经过验证的更改。", stage.changes.len()));
     Ok(ApplyResult {
-        revision: outcome.revision,
+        revision: committed_revision,
         snapshot_id: outcome.snapshot_id,
         diagnostics,
         warnings: outcome.warnings,
@@ -821,7 +1130,6 @@ fn prepare_snapshot_restore(
     Ok(PreparedSnapshotRestore {
         current_bytes,
         restored_bytes,
-        restored_document,
         validation,
         snapshot,
         changed_keys,
@@ -899,13 +1207,8 @@ fn apply_prepared_snapshot_restore(
         ));
     }
 
-    let restored_revision = replace_open_session(
-        state,
-        session_id,
-        &session,
-        prepared.restored_bytes,
-        prepared.restored_document,
-    )?;
+    let restored_revision =
+        refresh_session_after_verified_write(state, session_id, &session, &outcome.revision)?;
     let mut diagnostics = prepared.validation.diagnostics;
     diagnostics.push(format!(
         "已恢复快照 {restored_snapshot_id}；恢复前状态已保存为回滚快照 {}。",
@@ -1070,6 +1373,57 @@ fn replace_open_session(
         );
     clear_stages_for_session(state, session_id)?;
     Ok(revision)
+}
+
+fn refresh_session_after_verified_write(
+    state: &AppState,
+    session_id: &str,
+    previous: &OpenSession,
+    expected_revision: &str,
+) -> Result<String, CommandError> {
+    let bytes = match safe_write::read_regular_target_file(&previous.path) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            if let Ok(mut sessions) = state.sessions.lock() {
+                sessions.remove(session_id);
+            }
+            let _ = clear_stages_for_session(state, session_id);
+            return Err(CommandError::new(
+                "post_validation_unverified",
+                format!(
+                    "the write passed Ghostty validation, but the target could not be read back; editing was stopped: {}",
+                    error.message
+                ),
+            ));
+        }
+    };
+    let actual_revision = safe_write::revision(&bytes);
+    let document = match ConfigDocument::parse(&bytes) {
+        Ok(document) => document,
+        Err(error) => {
+            if let Ok(mut sessions) = state.sessions.lock() {
+                sessions.remove(session_id);
+            }
+            let _ = clear_stages_for_session(state, session_id);
+            return Err(CommandError::new(
+                "post_validation_unverified",
+                format!(
+                    "the write passed Ghostty validation, but the final target could not be parsed; editing was stopped: {}",
+                    error.message
+                ),
+            ));
+        }
+    };
+    let refreshed_revision = replace_open_session(state, session_id, previous, bytes, document)?;
+    if actual_revision != expected_revision {
+        return Err(CommandError::new(
+            "post_validation_conflict",
+            format!(
+                "the configuration changed in another program while Ghostty Studio was completing validation; the external edit was kept and the session was refreshed to revision {refreshed_revision}"
+            ),
+        ));
+    }
+    Ok(refreshed_revision)
 }
 
 fn refresh_or_expire_session(
@@ -1250,7 +1604,7 @@ fn acquire_mutation(state: &AppState) -> Result<MutationGuard<'_>, CommandError>
         .map_err(|_| {
             CommandError::new(
                 "mutation_in_progress",
-                "another Open, Stage, Apply, or Restore transition is already active",
+                "another Open, Create, Stage, Apply, or Restore transition is already active",
             )
         })?;
     Ok(MutationGuard(&state.mutation_in_flight))
@@ -1335,8 +1689,8 @@ pub fn run() {
                 tauri::WebviewUrl::App("index.html".into()),
             )
             .title("Ghostty Studio")
-            .inner_size(1320.0, 840.0)
-            .min_inner_size(1040.0, 680.0)
+            .inner_size(1180.0, 780.0)
+            .min_inner_size(780.0, 560.0)
             .resizable(true)
             .center()
             .general_autofill_enabled(false)
@@ -1353,6 +1707,7 @@ pub fn run() {
             inspect_extension_manifest,
             load_config_graph,
             open_config,
+            create_config,
             stage_changes,
             apply_changes,
             list_snapshots,
@@ -1376,6 +1731,51 @@ fn allowed_navigation(url: &tauri::Url) -> bool {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn every_registered_command_has_a_manifest_and_capability_permission() {
+        let source = include_str!("lib.rs");
+        let handler = source
+            .split_once(".invoke_handler(tauri::generate_handler![")
+            .and_then(|(_, remainder)| remainder.split_once("])"))
+            .map(|(commands, _)| commands)
+            .expect("invoke handler command list should remain discoverable");
+        let build_script = include_str!("../build.rs");
+        let capability = include_str!("../capabilities/main.json");
+        let permission_root =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("permissions/autogenerated");
+
+        for command in handler
+            .split(',')
+            .map(str::trim)
+            .filter(|command| !command.is_empty())
+        {
+            assert!(
+                build_script.contains(&format!("\"{command}\"")),
+                "{command} is registered with Tauri but missing from build.rs COMMANDS"
+            );
+
+            let permission_name = format!("allow-{}", command.replace('_', "-"));
+            assert!(
+                capability.contains(&format!("\"{permission_name}\"")),
+                "{command} is registered with Tauri but missing from the main capability"
+            );
+
+            let permission_path = permission_root.join(format!("{command}.toml"));
+            let permission = fs::read_to_string(&permission_path).unwrap_or_else(|error| {
+                panic!(
+                    "{} has no generated permission file at {}: {error}",
+                    command,
+                    permission_path.display()
+                )
+            });
+            assert!(
+                permission.contains(&format!("commands.allow = [\"{command}\"]")),
+                "{} does not allow {command}",
+                permission_path.display()
+            );
+        }
+    }
 
     #[test]
     fn navigation_allowlist_rejects_unexpected_origins() {
@@ -1404,6 +1804,59 @@ mod tests {
         );
         drop(guard);
         assert!(acquire_mutation(&state).is_ok());
+    }
+
+    #[test]
+    fn creation_requires_exactly_one_matching_default_layer_after_commit() {
+        fn candidate(id: &str, path: &str, exists: bool) -> ConfigCandidate {
+            ConfigCandidate {
+                id: id.to_string(),
+                label: id.to_string(),
+                path: path.to_string(),
+                source: "xdg".to_string(),
+                format: "legacy".to_string(),
+                priority: 0,
+                exists,
+                writable: true,
+                symlink: false,
+                size_bytes: exists.then_some(0),
+            }
+        }
+
+        let selected = candidate("selected", "/home/user/.config/ghostty/config", true);
+        let missing = candidate("missing", "/home/user/Library/ghostty/config", false);
+        let candidates = vec![selected.clone(), missing];
+        assert_eq!(
+            require_unique_created_candidate(&candidates, &selected.id, &selected.path)
+                .unwrap()
+                .id,
+            selected.id
+        );
+
+        let error =
+            require_unique_created_candidate(&[], &selected.id, &selected.path).unwrap_err();
+        assert_eq!(error.code, "post_creation_unverified");
+
+        let competing = candidate("competing", "/home/user/Library/ghostty/config", true);
+        let error = require_unique_created_candidate(
+            &[selected.clone(), competing],
+            &selected.id,
+            &selected.path,
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "post_creation_conflict");
+
+        let error = require_unique_created_candidate(
+            &[candidate(
+                "other",
+                "/home/user/.config/ghostty/config.ghostty",
+                true,
+            )],
+            &selected.id,
+            &selected.path,
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "post_creation_conflict");
     }
 
     #[test]
@@ -1523,11 +1976,9 @@ mod tests {
                 editable: true,
             }],
         });
-        let document = ConfigDocument::parse(b"font-size = 13\n").unwrap();
         let prepared = |changed_keys: Vec<String>| PreparedSnapshotRestore {
             current_bytes: b"font-size = 14\n".to_vec(),
             restored_bytes: b"font-size = 13\n".to_vec(),
-            restored_document: document.clone(),
             validation: ghostty::ValidationReport {
                 valid: true,
                 diagnostics: Vec::new(),
@@ -1583,6 +2034,63 @@ mod tests {
                 valid: true,
             },
         );
+    }
+
+    #[test]
+    fn final_readback_keeps_a_concurrent_edit_and_refreshes_the_session() {
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("config");
+        let committed = b"font-size = 14\n";
+        let external = b"font-size = 99\n";
+        fs::write(&target, committed).unwrap();
+        let state = AppState::default();
+        let session_id = insert_writable_session(&state, &target, committed);
+        let previous = open_session(&state, &session_id).unwrap();
+        insert_stage(&state, &session_id, &previous.revision);
+
+        fs::write(&target, external).unwrap();
+        let error = refresh_session_after_verified_write(
+            &state,
+            &session_id,
+            &previous,
+            &safe_write::revision(committed),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.code, "post_validation_conflict");
+        let refreshed = open_session(&state, &session_id).unwrap();
+        assert_eq!(refreshed.original_bytes, external);
+        assert_eq!(refreshed.revision, safe_write::revision(external));
+        assert!(state.stages.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn failed_final_readback_expires_the_session() {
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("config");
+        let committed = b"font-size = 14\n";
+        fs::write(&target, committed).unwrap();
+        let state = AppState::default();
+        let session_id = insert_writable_session(&state, &target, committed);
+        let previous = open_session(&state, &session_id).unwrap();
+        insert_stage(&state, &session_id, &previous.revision);
+
+        fs::remove_file(&target).unwrap();
+        let error = refresh_session_after_verified_write(
+            &state,
+            &session_id,
+            &previous,
+            &safe_write::revision(committed),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.code, "post_validation_unverified");
+        let expired = match open_session(&state, &session_id) {
+            Ok(_) => panic!("session should have expired"),
+            Err(error) => error,
+        };
+        assert_eq!(expired.code, "unknown_session");
+        assert!(state.stages.lock().unwrap().is_empty());
     }
 
     #[test]
