@@ -3,7 +3,9 @@ import type { RuntimeOption } from "../types";
 interface SettingControlProps {
   option: RuntimeOption;
   value: string;
+  label?: string;
   disabled?: boolean;
+  describedBy?: string;
   onChange(value: string): void;
 }
 
@@ -12,7 +14,14 @@ function normalizeColor(value: string): string {
   return /^[0-9a-fA-F]{6}$/.test(stripped) ? `#${stripped}` : "#000000";
 }
 
-export function SettingControl({ option, value, disabled = false, onChange }: SettingControlProps) {
+export function SettingControl({
+  option,
+  value,
+  label = option.key,
+  disabled = false,
+  describedBy,
+  onChange,
+}: SettingControlProps) {
   if (option.kind === "boolean") {
     const enabled = value === "true";
     return (
@@ -22,7 +31,8 @@ export function SettingControl({ option, value, disabled = false, onChange }: Se
         role="switch"
         aria-checked={enabled}
         disabled={disabled}
-        aria-label={`${option.key}: ${enabled ? "开启" : "关闭"}`}
+        aria-describedby={describedBy}
+        aria-label={`${label}: ${enabled ? "开启" : "关闭"}`}
         onClick={() => onChange(enabled ? "false" : "true")}
       >
         <span />
@@ -35,7 +45,8 @@ export function SettingControl({ option, value, disabled = false, onChange }: Se
       <select
         disabled={disabled}
         value={value}
-        aria-label={`${option.key} 选项`}
+        aria-label={`${label} 选项`}
+        aria-describedby={describedBy}
         onChange={(event) => onChange(event.target.value)}
       >
         {!option.choices.includes(value) && <option value={value}>{value}</option>}
@@ -56,7 +67,8 @@ export function SettingControl({ option, value, disabled = false, onChange }: Se
           disabled={disabled}
           value={normalizeColor(value)}
           onChange={(event) => onChange(event.target.value.slice(1))}
-          aria-label={`${option.key} 颜色`}
+          aria-label={`${label} 颜色`}
+          aria-describedby={describedBy}
         />
         <input
           className="color-value"
@@ -64,7 +76,8 @@ export function SettingControl({ option, value, disabled = false, onChange }: Se
           value={value}
           spellCheck={false}
           onChange={(event) => onChange(event.target.value.replace(/^#/, ""))}
-          aria-label={`${option.key} 色值`}
+          aria-label={`${label} 色值`}
+          aria-describedby={describedBy}
         />
       </div>
     );
@@ -84,19 +97,43 @@ export function SettingControl({ option, value, disabled = false, onChange }: Se
             step="0.01"
             value={Number.isFinite(numeric) ? numeric : 1}
             onChange={(event) => onChange(event.target.value)}
-            aria-label={`${option.key} 滑块`}
+            aria-label={`${label} 滑块`}
+            aria-describedby={describedBy}
           />
         )}
-        <input
-          type="number"
-          disabled={disabled}
-          min={opacity ? "0" : undefined}
-          max={opacity ? "1" : undefined}
-          step={option.kind === "integer" ? "1" : opacity ? "0.01" : "0.5"}
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          aria-label={`${option.key} 数值`}
-        />
+        {opacity ? (
+          <div className="percentage-control">
+            <input
+              type="number"
+              disabled={disabled}
+              min="0"
+              max="100"
+              step="1"
+              value={Number.isFinite(numeric) ? Math.round(numeric * 100) : ""}
+              onChange={(event) => {
+                if (event.target.value === "") {
+                  onChange("");
+                  return;
+                }
+                const percentage = Math.min(100, Math.max(0, Number(event.target.value)));
+                onChange(String(percentage / 100));
+              }}
+              aria-label={`${label} 百分比`}
+              aria-describedby={describedBy}
+            />
+            <span aria-hidden="true">%</span>
+          </div>
+        ) : (
+          <input
+            type="number"
+            disabled={disabled}
+            step={option.kind === "integer" ? "1" : "0.5"}
+            value={value}
+            onChange={(event) => onChange(event.target.value)}
+            aria-label={`${label} 数值`}
+            aria-describedby={describedBy}
+          />
+        )}
       </div>
     );
   }
@@ -108,7 +145,8 @@ export function SettingControl({ option, value, disabled = false, onChange }: Se
       value={value}
       spellCheck={false}
       onChange={(event) => onChange(event.target.value)}
-      aria-label={`${option.key} 值`}
+      aria-label={`${label} 值`}
+      aria-describedby={describedBy}
     />
   );
 }

@@ -10,6 +10,7 @@
     "allow-inspect-extension-manifest",
     "allow-load-config-graph",
     "allow-open-config",
+    "allow-create-config",
     "allow-stage-changes",
     "allow-apply-changes",
     "allow-list-snapshots",

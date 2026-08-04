@@ -71,6 +71,8 @@ cleanup() {
 trap cleanup EXIT
 
 ditto "$app_path" "$staging_root/Ghostty Studio.app"
+ditto "$project_root/LICENSE" "$staging_root/LICENSE.txt"
+ditto "$project_root/THIRD_PARTY_NOTICES.md" "$staging_root/THIRD_PARTY_NOTICES.txt"
 codesign --verify --deep --strict --verbose=2 "$staging_root/Ghostty Studio.app"
 ln -s /Applications "$staging_root/Applications"
 

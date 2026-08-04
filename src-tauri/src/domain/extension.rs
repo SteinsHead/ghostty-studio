@@ -97,6 +97,7 @@ pub fn validate_manifest(
     bytes: &[u8],
     trusted: bool,
     core_keys: &HashSet<String>,
+    installed_ghostty_version: Option<&str>,
 ) -> Result<ValidatedExtension, CommandError> {
     if bytes.len() > MAX_MANIFEST_BYTES {
         return Err(CommandError::new(
@@ -144,12 +145,32 @@ pub fn validate_manifest(
         ));
     }
     if let Some(requirement) = &manifest.ghostty {
-        VersionReq::parse(requirement).map_err(|error| {
+        let ghostty_requirement = VersionReq::parse(requirement).map_err(|error| {
             CommandError::new(
                 "invalid_ghostty_requirement",
                 format!("ghostty must be a semantic version requirement: {error}"),
             )
         })?;
+        let installed = installed_ghostty_version.ok_or_else(|| {
+            CommandError::new(
+                "ghostty_required_by_extension",
+                format!("extension requires Ghostty {requirement}, but Ghostty is unavailable"),
+            )
+        })?;
+        let installed = Version::parse(installed).map_err(|error| {
+            CommandError::new(
+                "invalid_installed_ghostty_version",
+                format!("installed Ghostty version is not semantic versioning: {error}"),
+            )
+        })?;
+        if !ghostty_requirement.matches(&installed) {
+            return Err(CommandError::new(
+                "incompatible_ghostty_version",
+                format!(
+                    "extension requires Ghostty {requirement}, installed version is {installed}"
+                ),
+            ));
+        }
     }
 
     let mut unique_capabilities = HashSet::new();
@@ -188,6 +209,7 @@ pub fn validate_manifest(
             "extension contains more than 1,000 contributions",
         ));
     }
+    validate_capability_contributions(&manifest)?;
     validate_settings(&manifest, trusted, core_keys)?;
     validate_presets(&manifest)?;
     validate_migrations(&manifest)?;
@@ -202,6 +224,30 @@ pub fn validate_manifest(
         migration_count: manifest.contributes.migrations.len(),
         trusted,
     })
+}
+
+fn validate_capability_contributions(manifest: &ExtensionManifest) -> Result<(), CommandError> {
+    let has = |capability: &str| manifest.capabilities.iter().any(|item| item == capability);
+    if !manifest.contributes.settings.is_empty() && !has("schema.metadata") && !has("core.override")
+    {
+        return Err(CommandError::new(
+            "missing_extension_capability",
+            "settings contributions require the schema.metadata capability",
+        ));
+    }
+    if !manifest.contributes.presets.is_empty() && !has("presets") {
+        return Err(CommandError::new(
+            "missing_extension_capability",
+            "preset contributions require the presets capability",
+        ));
+    }
+    if !manifest.contributes.migrations.is_empty() && !has("migrations.declarative") {
+        return Err(CommandError::new(
+            "missing_extension_capability",
+            "migration contributions require the migrations.declarative capability",
+        ));
+    }
+    Ok(())
 }
 
 fn validate_settings(
@@ -223,10 +269,16 @@ fn validate_settings(
                 format!("extension repeats setting metadata for {}", setting.key),
             ));
         }
-        if core_keys.contains(&setting.key) && !can_override {
+        if core_keys.contains(&setting.key)
+            && !can_override
+            && (setting.kind.is_some() || !setting.choices.is_empty() || setting.risk.is_some())
+        {
             return Err(CommandError::new(
-                "extension_core_collision",
-                format!("{} is a core setting and cannot be overridden", setting.key),
+                "untrusted_core_behavior_override",
+                format!(
+                    "{} is a core setting; community metadata may add labels, descriptions, aliases and categories, but cannot change behavior",
+                    setting.key
+                ),
             ));
         }
         validate_short_text(&setting.category, "setting category", 80)?;
@@ -385,7 +437,7 @@ mod tests {
             "presets": [{"id":"dev.example.fast","name":"Fast","values":{"example-mode":["a"]}}]
           }
         }"#;
-        let validated = validate_manifest(bytes, false, &core_keys()).unwrap();
+        let validated = validate_manifest(bytes, false, &core_keys(), Some("1.3.1")).unwrap();
         assert_eq!(validated.setting_count, 1);
         assert_eq!(validated.preset_count, 1);
     }
@@ -396,19 +448,29 @@ mod tests {
           "manifestVersion":1,"id":"dev.example.bad","name":"Bad","version":"1.0.0",
           "hostApi":"^1","capabilities":[],"entrypoint":"curl bad.example"
         }"#;
-        let error = validate_manifest(bytes, false, &core_keys()).unwrap_err();
+        let error = validate_manifest(bytes, false, &core_keys(), Some("1.3.1")).unwrap_err();
         assert_eq!(error.code, "invalid_extension_manifest");
     }
 
     #[test]
-    fn rejects_untrusted_core_metadata_override() {
+    fn accepts_untrusted_presentation_metadata_for_a_core_setting() {
         let bytes = br#"{
           "manifestVersion":1,"id":"dev.example.override","name":"Override","version":"1.0.0",
           "hostApi":"^1","capabilities":["schema.metadata"],
           "contributes":{"settings":[{"key":"font-size","category":"Wrong"}]}
         }"#;
-        let error = validate_manifest(bytes, false, &core_keys()).unwrap_err();
-        assert_eq!(error.code, "extension_core_collision");
+        assert!(validate_manifest(bytes, false, &core_keys(), Some("1.3.1")).is_ok());
+    }
+
+    #[test]
+    fn rejects_untrusted_behavior_changes_for_a_core_setting() {
+        let bytes = br#"{
+          "manifestVersion":1,"id":"dev.example.override","name":"Override","version":"1.0.0",
+          "hostApi":"^1","capabilities":["schema.metadata"],
+          "contributes":{"settings":[{"key":"font-size","category":"Wrong","kind":"text"}]}
+        }"#;
+        let error = validate_manifest(bytes, false, &core_keys(), Some("1.3.1")).unwrap_err();
+        assert_eq!(error.code, "untrusted_core_behavior_override");
     }
 
     #[test]
@@ -418,8 +480,29 @@ mod tests {
           "hostApi":"^1","capabilities":["schema.metadata","core.override"],
           "contributes":{"settings":[{"key":"font-size","category":"Typography"}]}
         }"#;
-        let untrusted = validate_manifest(bytes, false, &core_keys()).unwrap_err();
+        let untrusted = validate_manifest(bytes, false, &core_keys(), Some("1.3.1")).unwrap_err();
         assert_eq!(untrusted.code, "untrusted_core_override");
-        assert!(validate_manifest(bytes, true, &core_keys()).is_ok());
+        assert!(validate_manifest(bytes, true, &core_keys(), Some("1.3.1")).is_ok());
+    }
+
+    #[test]
+    fn rejects_contributions_without_their_declared_capability() {
+        let bytes = br#"{
+          "manifestVersion":1,"id":"dev.example.preset","name":"Preset","version":"1.0.0",
+          "hostApi":"^1","capabilities":[],
+          "contributes":{"presets":[{"id":"dev.example.fast","name":"Fast","values":{}}]}
+        }"#;
+        let error = validate_manifest(bytes, false, &core_keys(), Some("1.3.1")).unwrap_err();
+        assert_eq!(error.code, "missing_extension_capability");
+    }
+
+    #[test]
+    fn enforces_the_installed_ghostty_requirement() {
+        let bytes = br#"{
+          "manifestVersion":1,"id":"dev.example.future","name":"Future","version":"1.0.0",
+          "hostApi":"^1","ghostty":">=2.0","capabilities":[]
+        }"#;
+        let error = validate_manifest(bytes, false, &core_keys(), Some("1.3.1")).unwrap_err();
+        assert_eq!(error.code, "incompatible_ghostty_version");
     }
 }

@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useId } from "react";
 import { ChevronRight, GitBranch, Wifi } from "lucide-react";
 import { compositePreviewBackground } from "../previewColor";
 
@@ -18,6 +18,7 @@ function boundedNumber(value: string | undefined, fallback: number, minimum: num
 }
 
 export const TerminalPreview = memo(function TerminalPreview({ values }: TerminalPreviewProps) {
+  const descriptionId = useId();
   const background = cssColor(values.background, "#1e1e2e");
   const foreground = cssColor(values.foreground, "#cdd6f4");
   const fontSize = boundedNumber(values["font-size"], 14, 8, 32);
@@ -26,8 +27,13 @@ export const TerminalPreview = memo(function TerminalPreview({ values }: Termina
   const cursorStyle = values["cursor-style"] ?? "block";
 
   return (
-    <div className="terminal-shell" aria-label="终端外观预览">
-      <div className="terminal-titlebar">
+    <div
+      className="terminal-shell"
+      role="img"
+      aria-label="终端外观模拟预览"
+      aria-describedby={descriptionId}
+    >
+      <div className="terminal-titlebar" aria-hidden="true">
         <div className="traffic-lights" aria-hidden="true">
           <span className="traffic-light traffic-light--red" />
           <span className="traffic-light traffic-light--yellow" />
@@ -38,6 +44,7 @@ export const TerminalPreview = memo(function TerminalPreview({ values }: Termina
       </div>
       <div
         className="terminal-screen"
+        aria-hidden="true"
         style={{
           backgroundColor: compositePreviewBackground(background, opacity),
           color: foreground,
@@ -67,9 +74,9 @@ export const TerminalPreview = memo(function TerminalPreview({ values }: Termina
           <i className={`cursor cursor--${cursorStyle}`} />
         </div>
       </div>
-      <div className="preview-caption">
-        仅预览颜色、字体、间距与光标。
-      </div>
+      <span className="sr-only" id={descriptionId}>
+        模拟效果：仅反映颜色、字体、间距与光标，不运行 Ghostty，也不计算多配置层的最终生效值。
+      </span>
     </div>
   );
 });

@@ -141,11 +141,24 @@ export interface SnapshotInfo {
   sizeBytes: number;
 }
 
+export interface ExtensionInspection {
+  id: string;
+  name: string;
+  version: string;
+  capabilities: string[];
+  settingCount: number;
+  presetCount: number;
+  migrationCount: number;
+  trusted: boolean;
+}
+
 export interface Backend {
   probeEnvironment(): Promise<EnvironmentReport>;
   loadRuntimeSchema(): Promise<RuntimeSchema>;
   loadConfigGraph(): Promise<ConfigGraph>;
+  inspectExtensionManifest(manifest: string): Promise<ExtensionInspection>;
   openConfig(candidateId: string): Promise<ConfigSession>;
+  createConfig(candidateId: string): Promise<ConfigSession>;
   stageChanges(
     sessionId: string,
     revision: string,
