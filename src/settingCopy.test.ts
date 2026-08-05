@@ -9,7 +9,7 @@ describe("setting copy", () => {
     );
 
     expect(copy.label).toBe("背景不透明度");
-    expect(copy.summary).toBe("控制背景可见程度；0% 完全透明，100% 完全不透明。");
+    expect(copy.summary).toBe("数值越低，终端背景越透明。");
     expect(copy.detail).toContain("The opacity level");
   });
 

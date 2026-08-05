@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { backend } from "./backend";
 import { demoEnvironment, demoSchema } from "./demo";
+import { I18nProvider } from "./i18n";
 import type { ConfigCandidate, ConfigGraph, ConfigSession, EnvironmentReport } from "./types";
 
 const emptyGraph: ConfigGraph = {
@@ -25,8 +26,16 @@ function sessionFor(candidate: ConfigCandidate): ConfigSession {
     revision: `revision-${candidate.id}`,
     readOnly: false,
     values: Object.fromEntries(
-      demoSchema.options.map((option) => [option.key, [...option.currentValues]]),
+      demoSchema.options
+        .filter((option) => option.editable)
+        .map((option) => [option.key, [...option.currentValues]]),
     ),
+    configuredSettings: demoSchema.options.map((option) => ({
+      key: option.key,
+      occurrenceCount: Math.max(1, option.currentValues.length),
+      valueExposure: option.editable ? "available" as const : "protected" as const,
+    })),
+    unrecognizedSettingCount: 0,
     diagnostics: [],
   };
 }
@@ -62,6 +71,7 @@ describe("primary application journey", () => {
       unifiedDiff: "diff",
       diagnostics: [],
       valid: true,
+      activation: "reload",
     }));
     container = document.createElement("div");
     document.body.append(container);
@@ -134,5 +144,132 @@ describe("primary application journey", () => {
     expect(container.querySelectorAll('[role="dialog"]')).toHaveLength(1);
     expect(container.querySelector('[role="dialog"] h2')?.textContent).toBe("选择配置");
     expect(backend.stageChanges).not.toHaveBeenCalled();
+  });
+
+  it("keeps the editing journey free of disabled reference controls", async () => {
+    const preferred = environment.candidates[0];
+    window.localStorage.setItem("ghostty-studio:preferred-candidate", preferred.id);
+    act(() => root.render(<App />));
+    await settle();
+
+    const appearance = [...container.querySelectorAll<HTMLButtonElement>(".category-nav button")]
+      .find((button) => button.textContent?.trim() === "外观")!;
+    act(() => appearance.click());
+
+    expect(container.querySelector(".settings-pane select:disabled")).toBeNull();
+    expect(container.querySelector(".settings-pane input:disabled")).toBeNull();
+    expect(container.querySelector(".reference-setting-row__key")?.textContent).not.toBe("theme");
+    expect(container.textContent).toContain("查看全部设置");
+  });
+
+  it("shows protected configured keys without exposing their values", async () => {
+    const preferred = environment.candidates[0];
+    window.localStorage.setItem("ghostty-studio:preferred-candidate", preferred.id);
+    act(() => root.render(<App />));
+    await settle();
+
+    const configured = [...container.querySelectorAll<HTMLButtonElement>(".main-nav button")]
+      .find((button) => button.textContent?.trim() === "已设置")!;
+    act(() => configured.click());
+
+    const themeRow = [...container.querySelectorAll<HTMLElement>(".reference-setting-row")]
+      .find((row) => row.querySelector("code")?.textContent === "theme")!;
+    expect(themeRow).toBeTruthy();
+    expect(themeRow.textContent).toContain("这份文件已设置");
+    expect(themeRow.textContent).toContain("Studio 会保留原值");
+    expect(themeRow.textContent).not.toContain("Catppuccin");
+    expect(themeRow.querySelector("input, select, button")).toBeNull();
+  });
+
+  it("returns unsupported search matches as reference content", async () => {
+    const preferred = environment.candidates[0];
+    window.localStorage.setItem("ghostty-studio:preferred-candidate", preferred.id);
+    act(() => root.render(<App />));
+    await settle();
+
+    const search = container.querySelector<HTMLInputElement>('input[aria-label="搜索设置"]')!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    act(() => {
+      setter.call(search, "theme");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    expect(container.textContent).toContain("全部设置");
+    const row = container.querySelector<HTMLElement>(".reference-setting-row")!;
+    expect(row.querySelector("code")?.textContent).toBe("theme");
+    expect(row.querySelector("input, select, button")).toBeNull();
+  });
+
+  it("moves from the complete catalog to the real editor", async () => {
+    const preferred = environment.candidates[0];
+    window.localStorage.setItem("ghostty-studio:preferred-candidate", preferred.id);
+    act(() => root.render(<App />));
+    await settle();
+
+    const catalog = [...container.querySelectorAll<HTMLButtonElement>(".category-nav button")]
+      .find((button) => button.textContent?.trim() === "全部设置")!;
+    act(() => catalog.click());
+    const opacityRow = [...container.querySelectorAll<HTMLElement>(".reference-setting-row")]
+      .find((row) => row.querySelector("code")?.textContent === "background-opacity")!;
+    const adjust = [...opacityRow.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.trim() === "调整")!;
+    act(() => adjust.click());
+
+    expect(container.querySelector(".section-heading h1")?.textContent).toBe("外观");
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("背景不透明度 滑块");
+  });
+
+  it("explains duplicate assignments before the user starts editing", async () => {
+    const preferred = environment.candidates[0];
+    window.localStorage.setItem("ghostty-studio:preferred-candidate", preferred.id);
+    vi.mocked(backend.openConfig).mockImplementation(async () => {
+      const opened = sessionFor(preferred);
+      return {
+        ...opened,
+        configuredSettings: opened.configuredSettings.map((item) => (
+          item.key === "background" ? { ...item, occurrenceCount: 2 } : item
+        )),
+      };
+    });
+    act(() => root.render(<App />));
+    await settle();
+
+    const background = [...container.querySelectorAll<HTMLElement>(".reference-setting-row")]
+      .find((row) => row.querySelector("code")?.textContent === "background")!;
+    expect(background).toBeTruthy();
+    expect(background.textContent).toContain("多处设置");
+    expect(background.querySelector("input, select, button")).toBeNull();
+    act(() => background.querySelector<HTMLDetailsElement>("details")!.setAttribute("open", ""));
+    expect(background.textContent).toContain("在文件中出现了 2 次");
+  });
+
+  it("keeps transient feedback in the selected interface language", async () => {
+    const preferred = environment.candidates[0];
+    window.localStorage.setItem("ghostty-studio:preferred-candidate", preferred.id);
+    window.localStorage.setItem("ghostty-studio.language.v1", "zh-CN");
+    act(() => root.render(<I18nProvider><App /></I18nProvider>));
+    await settle();
+
+    const percentage = container.querySelector<HTMLInputElement>(
+      'input[aria-label="背景不透明度 百分比"]',
+    )!;
+    const inputSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    act(() => {
+      inputSetter.call(percentage, "88");
+      percentage.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    act(() => container.querySelector<HTMLButtonElement>(".draft-dock .button--secondary")!.click());
+
+    expect(container.querySelector(".save-toast")?.textContent).toContain("已放弃 1 项修改");
+
+    const language = container.querySelector<HTMLSelectElement>('select[aria-label="界面语言"]')!;
+    const selectSetter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+    act(() => {
+      selectSetter.call(language, "en");
+      language.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    expect(container.querySelector(".save-toast")?.textContent).toContain("Discarded 1 change");
+    expect(container.querySelector(".save-toast__action")?.textContent).toBe("Undo");
   });
 });

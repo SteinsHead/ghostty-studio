@@ -52,7 +52,7 @@ describe("modal focus contract", () => {
     expect(sidebar.inert).toBe(true);
     expect(workspace.inert).toBe(true);
     expect(sidebar.getAttribute("aria-hidden")).toBe("true");
-    expect(document.activeElement).toBe(container.querySelector("[data-dialog-initial-focus]"));
+    expect(document.activeElement).toBe(container.querySelector(".review-panel"));
 
     act(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
     expect(container.querySelector(".review-panel")).toBeNull();

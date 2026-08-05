@@ -1,6 +1,6 @@
 [package]
 name = "ghostty-studio"
-version = "0.2.0"
+version = "0.3.0"
 description = "A visual Ghostty configurator that respects your config file"
 authors = ["SteinsHead"]
 license = "MIT"

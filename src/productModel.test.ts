@@ -18,6 +18,8 @@ const session: ConfigSession = {
   revision: "revision",
   readOnly: false,
   values: {},
+  configuredSettings: [],
+  unrecognizedSettingCount: 0,
   diagnostics: [],
 };
 

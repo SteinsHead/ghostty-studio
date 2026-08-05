@@ -1,0 +1,560 @@
+{
+  "formatVersion": 1,
+  "ghostty": ">=1.3.0, <1.4.0",
+  "options": [
+    {
+      "key": "font-size",
+      "observedFingerprints": [
+        "d068649085ea3f24e87890d169d28b2b2570e2b43a9f0c6e71d8329a6a051e3c",
+        "466853bccc737f9ace386a377be4b5b35363fe30bc09d5f8fbb3faa49957dde8"
+      ],
+      "kind": "number",
+      "choices": [],
+      "repeatable": false,
+      "risk": "normal",
+      "capability": {
+        "editMode": "control",
+        "reason": null,
+        "activation": "reload",
+        "constraintBehavior": "clamp",
+        "min": 1,
+        "max": 255,
+        "step": 0.5,
+        "unit": "pt",
+        "platform": null
+      }
+    },
+    {
+      "key": "minimum-contrast",
+      "observedFingerprints": ["4138c86a69721e780f6d58dc765a8007d76470d10c72c5dc8c87ab1793dca431"],
+      "kind": "number",
+      "choices": [],
+      "repeatable": false,
+      "risk": "normal",
+      "capability": {
+        "editMode": "control",
+        "reason": null,
+        "activation": "reload",
+        "constraintBehavior": "clamp",
+        "min": 1,
+        "max": 21,
+        "step": 0.1,
+        "unit": "ratio",
+        "platform": null
+      }
+    },
+    {
+      "key": "background-opacity",
+      "observedFingerprints": ["94fa805e93cecc490dc4d71bd8329e5302bcc0a35f8650dbde08a7cc07255338"],
+      "kind": "number",
+      "choices": [],
+      "repeatable": false,
+      "risk": "normal",
+      "capability": {
+        "editMode": "control",
+        "reason": null,
+        "activation": "restart-macos",
+        "constraintBehavior": "clamp",
+        "min": 0,
+        "max": 1,
+        "step": 0.01,
+        "unit": "percent",
+        "platform": null
+      }
+    },
+    {
+      "key": "background-opacity-cells",
+      "observedFingerprints": ["29564804e926b9b9cf104eac4d7da6f8e773c97ac7e9b4e3f2dc66d32f6c7975"],
+      "kind": "boolean",
+      "choices": [],
+      "repeatable": false,
+      "risk": "normal",
+      "capability": {
+        "editMode": "control",
+        "reason": null,
+        "activation": "reload",
+        "constraintBehavior": "reject",
+        "min": null,
+        "max": null,
+        "step": null,
+        "unit": null,
+        "platform": null
+      }
+    },
+    {
+      "key": "cursor-opacity",
+      "observedFingerprints": ["731e23fb8ad363c0eb58dc9ef9cc906c413fbf792803ed47364f5079b8a84e8f"],
+      "kind": "number",
+      "choices": [],
+      "repeatable": false,
+      "risk": "normal",
+      "capability": {
+        "editMode": "control",
+        "reason": null,
+        "activation": "reload",
+        "constraintBehavior": "clamp",
+        "min": 0,
+        "max": 1,
+        "step": 0.01,
+        "unit": "percent",
+        "platform": null
+      }
+    },
+    {
+      "key": "unfocused-split-opacity",
+      "observedFingerprints": ["03bd1ff1ebcb2b47f85228ec21dbbde964e9cdcc0cda9ea426a35a7ea6b381b2"],
+      "kind": "number",
+      "choices": [],
+      "repeatable": false,
+      "risk": "normal",
+      "capability": {
+        "editMode": "control",
+        "reason": null,
+        "activation": "reload",
+        "constraintBehavior": "clamp",
+        "min": 0.15,
+        "max": 1,
+        "step": 0.01,
+        "unit": "percent",
+        "platform": null
+      }
+    },
+    {
+      "key": "background",
+      "observedFingerprints": ["c6b0060dc9eb75a743893d2c28231fc9ca2f46217424e25a92c05e7fb18bae17"],
+      "kind": "color",
+      "choices": [],
+      "repeatable": false,
+      "risk": "normal",
+      "capability": {
+        "editMode": "control",
+        "reason": null,
+        "activation": "reload",
+        "constraintBehavior": "reject",
+        "min": null,
+        "max": null,
+        "step": null,
+        "unit": null,
+        "platform": null
+      }
+    },
+    {
+      "key": "foreground",
+      "observedFingerprints": ["4620a355c8fa11588a6848ee05ad3e25a068e8b9a3e5fc4ae1f5e803d91eb90c"],
+      "kind": "color",
+      "choices": [],
+      "repeatable": false,
+      "risk": "normal",
+      "capability": {
+        "editMode": "control",
+        "reason": null,
+        "activation": "reload",
+        "constraintBehavior": "reject",
+        "min": null,
+        "max": null,
+        "step": null,
+        "unit": null,
+        "platform": null
+      }
+    },
+    {
+      "key": "selection-foreground",
+      "observedFingerprints": ["5a940be28e6c30144ae6dceb617c31c35f1f9bb13454b4eb91e03a9802d0c739"],
+      "kind": "color",
+      "choices": [],
+      "repeatable": false,
+      "risk": "normal",
+      "capability": {
+        "editMode": "control",
+        "reason": null,
+        "activation": "reload",
+        "constraintBehavior": "reject",
+        "min": null,
+        "max": null,
+        "step": null,
+        "unit": null,
+        "platform": null
+      }
+    },
+    {
+      "key": "selection-background",
+      "observedFingerprints": ["ea10d0126dc41900a11e1256d3e84b85f6341866fbfa1b3d7c5d450d2c24b4a9"],
+      "kind": "color",
+      "choices": [],
+      "repeatable": false,
+      "risk": "normal",
+      "capability": {
+        "editMode": "control",
+        "reason": null,
+        "activation": "reload",
+        "constraintBehavior": "reject",
+        "min": null,
+        "max": null,
+        "step": null,
+        "unit": null,
+        "platform": null
+      }
+    },
+    {
+      "key": "cursor-color",
+      "observedFingerprints": ["fc53aaf99de39912b08b40b306ff1b7edbb76fdadd6e3bbc6ced710acbce0302"],
+      "kind": "color",
+      "choices": [],
+      "repeatable": false,
+      "risk": "normal",
+      "capability": {
+        "editMode": "control",
+        "reason": null,
+        "activation": "reload",
+        "constraintBehavior": "reject",
+        "min": null,
+        "max": null,
+        "step": null,
+        "unit": null,
+        "platform": null
+      }
+    },
+    {
+      "key": "split-divider-color",
+      "observedFingerprints": ["0fe0228340fad9a324324a3e0990a48153bd37629904f6f38171ab4b6e5586df"],
+      "kind": "color",
+      "choices": [],
+      "repeatable": false,
+      "risk": "normal",
+      "capability": {
+        "editMode": "control",
+        "reason": null,
+        "activation": "reload",
+        "constraintBehavior": "reject",
+        "min": null,
+        "max": null,
+        "step": null,
+        "unit": null,
+        "platform": null
+      }
+    },
+    {
+      "key": "cursor-style",
+      "observedFingerprints": ["46a2c88aa5e42be3bc6a29793e296b90b1938d059319d684d759fadc7e33cefc"],
+      "kind": "select",
+      "choices": ["block", "bar", "underline", "block_hollow"],
+      "repeatable": false,
+      "risk": "normal",
+      "capability": {
+        "editMode": "control",
+        "reason": null,
+        "activation": "reload",
+        "constraintBehavior": "reject",
+        "min": null,
+        "max": null,
+        "step": null,
+        "unit": null,
+        "platform": null
+      }
+    },
+    {
+      "key": "font-thicken",
+      "observedFingerprints": ["84166e848ec1a0429ae016a8c27ecd6ef26bb55af9faa95508c2bbf57ed7ef4f"],
+      "kind": "boolean",
+      "choices": [],
+      "repeatable": false,
+      "risk": "normal",
+      "capability": {
+        "editMode": "control",
+        "reason": null,
+        "activation": "reload",
+        "constraintBehavior": "reject",
+        "min": null,
+        "max": null,
+        "step": null,
+        "unit": null,
+        "platform": "macOS"
+      }
+    },
+    {
+      "key": "font-thicken-strength",
+      "observedFingerprints": ["37d185b284990a069f4e228a8e6553474869a0dd6c18e4ef37c9b367aec21c72"],
+      "kind": "integer",
+      "choices": [],
+      "repeatable": false,
+      "risk": "normal",
+      "capability": {
+        "editMode": "control",
+        "reason": null,
+        "activation": "reload",
+        "constraintBehavior": "reject",
+        "min": 0,
+        "max": 255,
+        "step": 1,
+        "unit": "level",
+        "platform": "macOS"
+      }
+    },
+    {
+      "key": "background-image-position",
+      "observedFingerprints": ["d0a38571bab75b80f74eea99a770bdedc177b8affd0feb2aa1c1a85eff187f2f"],
+      "kind": "select",
+      "choices": ["top-left", "top-center", "top-right", "center-left", "center", "center-right", "bottom-left", "bottom-center", "bottom-right"],
+      "repeatable": false,
+      "risk": "normal",
+      "capability": {
+        "editMode": "control",
+        "reason": null,
+        "activation": "reload",
+        "constraintBehavior": "reject",
+        "min": null,
+        "max": null,
+        "step": null,
+        "unit": null,
+        "platform": null
+      }
+    },
+    {
+      "key": "background-image-fit",
+      "observedFingerprints": ["afd225ced6aaf546172bcb7f336015fe38ec86b24382ff07a742747d43bffc1f"],
+      "kind": "select",
+      "choices": ["contain", "cover", "stretch", "none"],
+      "repeatable": false,
+      "risk": "normal",
+      "capability": {
+        "editMode": "control",
+        "reason": null,
+        "activation": "reload",
+        "constraintBehavior": "reject",
+        "min": null,
+        "max": null,
+        "step": null,
+        "unit": null,
+        "platform": null
+      }
+    },
+    {
+      "key": "background-image-repeat",
+      "observedFingerprints": ["652df1a686c2e4a964925dfad67ab36323d6abb2511f12eba9b84e7b52d019c1"],
+      "kind": "boolean",
+      "choices": [],
+      "repeatable": false,
+      "risk": "normal",
+      "capability": {
+        "editMode": "control",
+        "reason": null,
+        "activation": "reload",
+        "constraintBehavior": "reject",
+        "min": null,
+        "max": null,
+        "step": null,
+        "unit": null,
+        "platform": null
+      }
+    },
+    {
+      "key": "selection-clear-on-typing",
+      "observedFingerprints": ["6724c8cb56c81be68952fd15e54618a507a1aecbf1b2e7bf7056abc49e5a4f0c"],
+      "kind": "boolean",
+      "choices": [],
+      "repeatable": false,
+      "risk": "normal",
+      "capability": {
+        "editMode": "control",
+        "reason": null,
+        "activation": "reload",
+        "constraintBehavior": "reject",
+        "min": null,
+        "max": null,
+        "step": null,
+        "unit": null,
+        "platform": null
+      }
+    },
+    {
+      "key": "selection-clear-on-copy",
+      "observedFingerprints": ["05e1d8e6b88851f0819f501db26838485ebbe3a4e73ab50902bab603298b74ea"],
+      "kind": "boolean",
+      "choices": [],
+      "repeatable": false,
+      "risk": "normal",
+      "capability": {
+        "editMode": "control",
+        "reason": null,
+        "activation": "reload",
+        "constraintBehavior": "reject",
+        "min": null,
+        "max": null,
+        "step": null,
+        "unit": null,
+        "platform": null
+      }
+    },
+    {
+      "key": "cursor-click-to-move",
+      "observedFingerprints": ["342bafa9eb36b440b39094e79cf15b5ea903b07c11828ebc2ef199ace9851dbe"],
+      "kind": "boolean",
+      "choices": [],
+      "repeatable": false,
+      "risk": "normal",
+      "capability": {
+        "editMode": "control",
+        "reason": null,
+        "activation": "reload",
+        "constraintBehavior": "reject",
+        "min": null,
+        "max": null,
+        "step": null,
+        "unit": null,
+        "platform": null
+      }
+    },
+    {
+      "key": "mouse-hide-while-typing",
+      "observedFingerprints": ["0528b56c2b4026250eb2ec4f2a296d593ac447790a15ee6e1330954870ae6255"],
+      "kind": "boolean",
+      "choices": [],
+      "repeatable": false,
+      "risk": "normal",
+      "capability": {
+        "editMode": "control",
+        "reason": null,
+        "activation": "reload",
+        "constraintBehavior": "reject",
+        "min": null,
+        "max": null,
+        "step": null,
+        "unit": null,
+        "platform": null
+      }
+    },
+    {
+      "key": "window-padding-balance",
+      "observedFingerprints": ["b574daca1967c9b41d1e0adc5e849dcb8cfd2264bb08f07e2c53823eabec7319"],
+      "kind": "boolean",
+      "choices": [],
+      "repeatable": false,
+      "risk": "normal",
+      "capability": {
+        "editMode": "control",
+        "reason": null,
+        "activation": "reload",
+        "constraintBehavior": "reject",
+        "min": null,
+        "max": null,
+        "step": null,
+        "unit": null,
+        "platform": null
+      }
+    },
+    {
+      "key": "window-inherit-working-directory",
+      "observedFingerprints": ["623d1a6419a1b1d1ff67d26fc7c4a4504f53674b8ed4d2ea7895cb016a1164b6"],
+      "kind": "boolean",
+      "choices": [],
+      "repeatable": false,
+      "risk": "normal",
+      "capability": {
+        "editMode": "control",
+        "reason": null,
+        "activation": "reload-new-terminal",
+        "constraintBehavior": "reject",
+        "min": null,
+        "max": null,
+        "step": null,
+        "unit": null,
+        "platform": null
+      }
+    },
+    {
+      "key": "tab-inherit-working-directory",
+      "observedFingerprints": ["6621ea601b290971281ee218776c3a0b6d287a73be470f589ce7f4dd9420bbb2"],
+      "kind": "boolean",
+      "choices": [],
+      "repeatable": false,
+      "risk": "normal",
+      "capability": {
+        "editMode": "control",
+        "reason": null,
+        "activation": "reload-new-terminal",
+        "constraintBehavior": "reject",
+        "min": null,
+        "max": null,
+        "step": null,
+        "unit": null,
+        "platform": null
+      }
+    },
+    {
+      "key": "split-inherit-working-directory",
+      "observedFingerprints": ["958bf0c5a0ceeb9019bc3e327302e353842f982a692a6372b13f44737c20020d"],
+      "kind": "boolean",
+      "choices": [],
+      "repeatable": false,
+      "risk": "normal",
+      "capability": {
+        "editMode": "control",
+        "reason": null,
+        "activation": "reload-new-terminal",
+        "constraintBehavior": "reject",
+        "min": null,
+        "max": null,
+        "step": null,
+        "unit": null,
+        "platform": null
+      }
+    },
+    {
+      "key": "window-inherit-font-size",
+      "observedFingerprints": ["85d08fc097c60dc61fe778a63d2dea64ee0feeb24e7f1784070f567a6d089e58"],
+      "kind": "boolean",
+      "choices": [],
+      "repeatable": false,
+      "risk": "normal",
+      "capability": {
+        "editMode": "control",
+        "reason": null,
+        "activation": "reload-new-terminal",
+        "constraintBehavior": "reject",
+        "min": null,
+        "max": null,
+        "step": null,
+        "unit": null,
+        "platform": null
+      }
+    },
+    {
+      "key": "window-step-resize",
+      "observedFingerprints": ["bcdbfcf1684529b59b0078ad9d9b5d94cb21188e01c7418d65d9ba4cb2901740"],
+      "kind": "boolean",
+      "choices": [],
+      "repeatable": false,
+      "risk": "normal",
+      "capability": {
+        "editMode": "control",
+        "reason": null,
+        "activation": "reload",
+        "constraintBehavior": "reject",
+        "min": null,
+        "max": null,
+        "step": null,
+        "unit": null,
+        "platform": "macOS"
+      }
+    },
+    {
+      "key": "focus-follows-mouse",
+      "observedFingerprints": ["8ac4281fdd7e9b19ba6368972d62ff45b7fc720e3c7b102c15c900d00cf98b21"],
+      "kind": "boolean",
+      "choices": [],
+      "repeatable": false,
+      "risk": "normal",
+      "capability": {
+        "editMode": "control",
+        "reason": null,
+        "activation": "reload",
+        "constraintBehavior": "reject",
+        "min": null,
+        "max": null,
+        "step": null,
+        "unit": null,
+        "platform": null
+      }
+    }
+  ]
+}

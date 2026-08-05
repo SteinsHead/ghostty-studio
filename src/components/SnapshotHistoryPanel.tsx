@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -8,6 +8,7 @@ import {
   RotateCcw,
   X,
 } from "lucide-react";
+import { useI18n, type AppLocale } from "../i18n";
 import type { SnapshotInfo } from "../types";
 import { useDialogFocus } from "./useDialogFocus";
 
@@ -24,26 +25,28 @@ interface SnapshotHistoryPanelProps {
   onRestore(snapshot: SnapshotInfo): Promise<boolean>;
 }
 
-const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
-  dateStyle: "medium",
-  timeStyle: "short",
-});
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+function formatBytes(locale: AppLocale, bytes: number): string {
+  const format = (value: number) => new Intl.NumberFormat(locale, {
+    maximumFractionDigits: 1,
+  }).format(value);
+  if (bytes < 1024) return `${format(bytes)} B`;
+  if (bytes < 1024 * 1024) return `${format(bytes / 1024)} KB`;
+  return `${format(bytes / (1024 * 1024))} MB`;
 }
 
 function shortId(value: string): string {
   return value.length > 12 ? value.slice(0, 12) : value;
 }
 
-function formatSnapshotDate(value: number): string {
+function formatSnapshotDate(
+  locale: AppLocale,
+  formatter: Intl.DateTimeFormat,
+  value: number,
+): string {
   const date = new Date(value);
   return Number.isFinite(value) && !Number.isNaN(date.getTime())
-    ? dateFormatter.format(date)
-    : "时间未知";
+    ? formatter.format(date)
+    : locale === "zh-CN" ? "时间未知" : "Unknown date";
 }
 
 export function SnapshotHistoryPanel({
@@ -58,9 +61,14 @@ export function SnapshotHistoryPanel({
   onRetry,
   onRestore,
 }: SnapshotHistoryPanelProps) {
+  const { locale, text } = useI18n();
   const [pendingSnapshot, setPendingSnapshot] = useState<SnapshotInfo | null>(null);
   const restoring = restoringId !== null;
   const dialogRef = useDialogFocus(onClose, restoring);
+  const dateFormatter = useMemo(() => new Intl.DateTimeFormat(locale, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }), [locale]);
 
   const confirmRestore = async () => {
     if (!pendingSnapshot || readOnly || restoring) return;
@@ -87,28 +95,32 @@ export function SnapshotHistoryPanel({
       >
         <header className="review-header">
           <div>
-            <span className="eyebrow"><History size={14} /> 恢复配置</span>
-            <h2 id="history-title">快照历史</h2>
+            <span className="eyebrow"><History size={14} /> {text("恢复配置", "Restore configuration")}</span>
+            <h2 id="history-title">{text("恢复点", "Restore points")}</h2>
           </div>
           <button
             className="icon-button"
             type="button"
             disabled={restoring}
             onClick={onClose}
-            aria-label="关闭快照历史"
-            data-dialog-initial-focus
+            aria-label={text("关闭恢复点", "Close restore points")}
           >
             <X size={18} />
           </button>
         </header>
 
-        <div className="review-body" tabIndex={0} aria-label="快照历史内容">
+        <div className="review-body" tabIndex={0} aria-label={text("恢复点列表", "Restore point list")}>
           {readOnly && (
             <div className="history-demo-note">
               <LockKeyhole size={16} />
               <div>
-                <strong>演示数据</strong>
-                <span>这里显示的是示例快照，无法恢复。</span>
+                <strong>{text("只能查看", "View only")}</strong>
+                <span>
+                  {text(
+                    "当前配置的恢复点无法在这里恢复。",
+                    "Restore points for this configuration cannot be restored here.",
+                  )}
+                </span>
               </div>
             </div>
           )}
@@ -124,25 +136,29 @@ export function SnapshotHistoryPanel({
             <div className="history-message history-message--error" role="alert">
               <AlertTriangle size={16} />
               <span>{error}</span>
-              <button type="button" onClick={onRetry} disabled={restoring}>重试</button>
+              <button type="button" onClick={onRetry} disabled={restoring}>{text("重试", "Try again")}</button>
             </div>
           )}
 
           <div className="history-summary">
             <div>
               <strong>{snapshots.length}</strong>
-              <span>{readOnly ? "个示例" : "个可用快照"}</span>
+              <span>
+                {readOnly
+                  ? text("个恢复点", snapshots.length === 1 ? "Restore point" : "Restore points")
+                  : text("个可用恢复点", snapshots.length === 1 ? "Restore point available" : "Restore points available")}
+              </span>
             </div>
-            <p>按创建时间从新到旧排列。</p>
+            <p>{text("按创建时间从新到旧排列。", "Newest first.")}</p>
           </div>
 
           {loading ? (
-            <div className="loading-card">正在读取快照…</div>
+            <div className="loading-card">{text("正在读取恢复点…", "Loading restore points…")}</div>
           ) : snapshots.length === 0 ? (
             <div className="history-empty">
               <History size={22} />
-              <strong>还没有快照</strong>
-              <span>保存配置时会自动创建快照。</span>
+              <strong>{text("还没有恢复点", "No restore points yet")}</strong>
+              <span>{text("保存配置时会自动创建恢复点。", "A restore point is created whenever you save.")}</span>
             </div>
           ) : (
             <div className="snapshot-list">
@@ -154,30 +170,40 @@ export function SnapshotHistoryPanel({
                     <div className="snapshot-card__main">
                       <div className="snapshot-icon"><FileText size={16} /></div>
                       <div className="snapshot-copy">
-                        <strong>{formatSnapshotDate(snapshot.createdAtMs)}</strong>
-                        <span>{formatBytes(snapshot.sizeBytes)}</span>
-                        <small title={snapshot.id}>快照 {shortId(snapshot.id)}</small>
+                        <strong>{formatSnapshotDate(locale, dateFormatter, snapshot.createdAtMs)}</strong>
+                        <span>{formatBytes(locale, snapshot.sizeBytes)}</span>
+                        <small title={snapshot.id}>{text("恢复点", "Restore point")} {shortId(snapshot.id)}</small>
                       </div>
-                      <button
-                        type="button"
-                        className="button button--secondary snapshot-restore-button"
-                        disabled={readOnly || restoring}
-                        onClick={() => setPendingSnapshot(snapshot)}
-                      >
-                        <RotateCcw size={13} />
-                        恢复
-                      </button>
+                      {!readOnly && (
+                        <button
+                          type="button"
+                          className="button button--secondary snapshot-restore-button"
+                          disabled={restoring}
+                          onClick={() => setPendingSnapshot(snapshot)}
+                        >
+                          <RotateCcw size={13} />
+                          {text("恢复", "Restore")}
+                        </button>
+                      )}
                     </div>
 
                     {isPending && !readOnly && (
-                      <div className="snapshot-confirm" role="group" aria-label="确认恢复快照">
+                      <div className="snapshot-confirm" role="group" aria-label={text("确认恢复配置", "Confirm restore")}>
                         <div>
                           <AlertTriangle size={15} />
                           <p>
-                            <strong>恢复这个快照？</strong>
+                            <strong>{text("恢复这个版本？", "Restore this version?")}</strong>
                             <span>
-                              恢复前会先备份当前配置。
-                              {pendingChanges > 0 ? ` 当前 ${pendingChanges} 项未保存的修改会丢失。` : ""}
+                              {text(
+                                "恢复前会先备份当前配置。",
+                                "The current configuration will be backed up first.",
+                              )}
+                              {pendingChanges > 0
+                                ? text(
+                                    ` 当前 ${pendingChanges} 项未保存的修改会丢失。`,
+                                    ` ${pendingChanges} unsaved ${pendingChanges === 1 ? "change will" : "changes will"} be discarded.`,
+                                  )
+                                : ""}
                             </span>
                           </p>
                         </div>
@@ -188,7 +214,7 @@ export function SnapshotHistoryPanel({
                             disabled={restoring}
                             onClick={() => setPendingSnapshot(null)}
                           >
-                            取消
+                            {text("取消", "Cancel")}
                           </button>
                           <button
                             type="button"
@@ -196,7 +222,7 @@ export function SnapshotHistoryPanel({
                             disabled={restoring}
                             onClick={confirmRestore}
                           >
-                            {isRestoring ? "正在恢复…" : "确认恢复"}
+                            {isRestoring ? text("正在恢复…", "Restoring…") : text("确认恢复", "Restore")}
                           </button>
                         </div>
                       </div>
@@ -209,11 +235,16 @@ export function SnapshotHistoryPanel({
         </div>
 
         <footer className="review-footer">
-          <span className="readonly-note">
-            {readOnly ? "演示数据不会写入本机。" : "恢复前会验证配置，并保留当前版本。"}
-          </span>
+          {!readOnly && (
+            <span className="readonly-note">
+              {text(
+                "恢复前会检查配置，并保留当前版本。",
+                "Studio will check the configuration and preserve the current version before restoring.",
+              )}
+            </span>
+          )}
           <button type="button" className="button button--secondary" disabled={restoring} onClick={onClose}>
-            完成
+            {text("完成", "Done")}
           </button>
         </footer>
       </section>

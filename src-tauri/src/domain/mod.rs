@@ -1,3 +1,4 @@
+pub mod capability;
 pub mod config_document;
 pub mod config_graph;
 pub mod discovery;

@@ -3,29 +3,41 @@ use std::{collections::BTreeMap, path::Path};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    domain::ghostty,
+    domain::{capability::Catalog, ghostty},
     error::CommandError,
-    models::{RuntimeOption, RuntimeSchema},
+    models::{RuntimeCapability, RuntimeOption, RuntimeSchema},
 };
 
-const AUDITED_GHOSTTY_VERSION: &str = "1.3.1";
 const AUDITED_SCHEMA_HASH: &str =
     "5e36480fe2ec3d510ffc32de84c617fbaca10e1330c097185301b51ab9c10e6c";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ObservedEntry {
+    documentation: String,
+    value: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ObservedOption {
+    key: String,
+    description: String,
+    default_values: Vec<String>,
+    entries: Vec<ObservedEntry>,
+    repeatable: bool,
+}
 
 pub fn load(executable: &Path, version: Option<String>) -> Result<RuntimeSchema, CommandError> {
     let document = ghostty::show_default_config_with_docs(executable)?;
     let schema_hash = hex(&Sha256::digest(document.as_bytes()));
-    let contract_matches =
-        version.as_deref() == Some(AUDITED_GHOSTTY_VERSION) && schema_hash == AUDITED_SCHEMA_HASH;
-    let options = parse_document(&document, contract_matches);
-    let diagnostics = if contract_matches {
-        Vec::new()
-    } else {
-        vec![format!(
-            "当前 Ghostty 版本尚未适配，设置暂时只读（检测到 {}）。",
-            version.as_deref().unwrap_or("未知版本")
-        )]
-    };
+    let catalog = Catalog::bundled()?;
+    let options = build_runtime_options(
+        parse_observed_document(&document),
+        version.as_deref(),
+        std::env::consts::OS,
+        &catalog,
+    );
+    let diagnostics =
+        compatibility_diagnostics(version.as_deref(), &schema_hash, &options, &catalog);
     Ok(RuntimeSchema {
         ghostty_version: version,
         schema_hash,
@@ -34,8 +46,8 @@ pub fn load(executable: &Path, version: Option<String>) -> Result<RuntimeSchema,
     })
 }
 
-fn parse_document(document: &str, contract_matches: bool) -> Vec<RuntimeOption> {
-    let mut options = BTreeMap::<String, RuntimeOption>::new();
+fn parse_observed_document(document: &str) -> Vec<ObservedOption> {
+    let mut options = BTreeMap::<String, ObservedOption>::new();
     let mut documentation = Vec::<String>::new();
 
     for line in document.lines() {
@@ -61,41 +73,25 @@ fn parse_document(document: &str, contract_matches: bool) -> Vec<RuntimeOption> 
         let value = raw_value.trim().to_string();
         let description = documentation.join(" ");
         documentation.clear();
+        let entry = ObservedEntry {
+            documentation: description.clone(),
+            value: value.clone(),
+        };
 
         if let Some(existing) = options.get_mut(key) {
             existing.default_values.push(value);
+            existing.entries.push(entry);
             existing.repeatable = true;
-            existing.editable = false;
             continue;
         }
-        let contract = contract_matches.then(|| audited_contract(key)).flatten();
-        let (kind, choices) = match contract {
-            Some((kind, choices)) => (
-                kind,
-                choices.iter().map(|choice| (*choice).to_string()).collect(),
-            ),
-            None => ("text", Vec::new()),
-        };
-        let platform = platform_for(&description);
-        let repeatable = known_repeatable(key);
-        let risk = risk_for(key);
         options.insert(
             key.to_string(),
-            RuntimeOption {
+            ObservedOption {
                 key: key.to_string(),
                 description,
-                default_values: vec![value.clone()],
-                // `+show-config --default --docs` is a defaults catalog, not
-                // the user's complete effective configuration.
-                current_values: Vec::new(),
-                category: category_for(key).to_string(),
-                kind: kind.to_string(),
-                choices,
-                repeatable,
-                platform,
-                since: None,
-                risk: risk.to_string(),
-                editable: contract.is_some() && !repeatable && risk == "normal",
+                default_values: vec![value],
+                entries: vec![entry],
+                repeatable: known_repeatable(key),
             },
         );
     }
@@ -103,40 +99,180 @@ fn parse_document(document: &str, contract_matches: bool) -> Vec<RuntimeOption> 
     options.into_values().collect()
 }
 
+fn build_runtime_options(
+    observed: Vec<ObservedOption>,
+    version: Option<&str>,
+    runtime_platform: &str,
+    catalog: &Catalog,
+) -> Vec<RuntimeOption> {
+    observed
+        .into_iter()
+        .map(|observed| {
+            let inferred_platform = platform_for(&observed.key, &observed.description);
+            let inferred_risk = risk_for(&observed.key);
+            let fingerprint = observed_fingerprint(&observed);
+            let resolved = catalog.resolve(&observed.key, &fingerprint, version, runtime_platform);
+
+            let (kind, choices, repeatable, risk, mut capability) = match resolved {
+                Some(resolution) => {
+                    let option = resolution.option;
+                    (
+                        option.kind,
+                        option.choices,
+                        observed.repeatable || option.repeatable,
+                        option.risk,
+                        option.capability,
+                    )
+                }
+                None => {
+                    let platform = inferred_platform.clone();
+                    let reason = reference_reason(
+                        &observed.key,
+                        observed.repeatable,
+                        inferred_risk,
+                        platform.as_deref(),
+                        runtime_platform,
+                    );
+                    (
+                        "text".to_string(),
+                        Vec::new(),
+                        observed.repeatable,
+                        inferred_risk.to_string(),
+                        RuntimeCapability {
+                            edit_mode: "none".to_string(),
+                            reason: Some(reason.to_string()),
+                            activation: "unknown".to_string(),
+                            constraint_behavior: "unknown".to_string(),
+                            min: None,
+                            max: None,
+                            step: None,
+                            unit: None,
+                            platform,
+                        },
+                    )
+                }
+            };
+
+            if repeatable && capability.edit_mode != "none" {
+                capability.edit_mode = "none".to_string();
+                capability.reason = Some("needs-list-editor".to_string());
+            }
+            if risk != "normal" && capability.edit_mode != "none" {
+                capability.edit_mode = "none".to_string();
+                capability.reason = Some("protected".to_string());
+            }
+            let editable = capability.edit_mode == "control";
+            let platform = capability.platform.clone().or(inferred_platform);
+
+            RuntimeOption {
+                key: observed.key.clone(),
+                description: observed.description.clone(),
+                default_values: observed.default_values,
+                // `+show-config --default --docs` is a defaults catalog, not
+                // the user's complete effective configuration.
+                current_values: Vec::new(),
+                category: category_for(&observed.key).to_string(),
+                kind,
+                choices,
+                repeatable,
+                platform,
+                since: since_for(&observed.description),
+                risk,
+                editable,
+                capability,
+            }
+        })
+        .collect()
+}
+
+fn compatibility_diagnostics(
+    version: Option<&str>,
+    schema_hash: &str,
+    options: &[RuntimeOption],
+    catalog: &Catalog,
+) -> Vec<String> {
+    if !catalog.supports_version(version) {
+        return vec![format!(
+            "Ghostty {} 的设置正在适配；当前仍可安全浏览。",
+            version.unwrap_or("未知版本")
+        )];
+    }
+    if schema_hash == AUDITED_SCHEMA_HASH {
+        return Vec::new();
+    }
+
+    let changed = options
+        .iter()
+        .filter(|option| option.capability.reason.as_deref() == Some("setting-changed"))
+        .count();
+    let ready = options.iter().filter(|option| option.editable).count();
+    if changed == 0 {
+        vec![format!(
+            "Ghostty 新增或调整了设置；已有的 {ready} 项可编辑设置不受影响。"
+        )]
+    } else {
+        vec![format!(
+            "Ghostty 更新了 {changed} 项已适配设置；这些设置会在确认后重新开放，其余 {ready} 项仍可编辑。"
+        )]
+    }
+}
+
+fn observed_fingerprint(option: &ObservedOption) -> String {
+    let mut digest = Sha256::new();
+    update_frame(&mut digest, "ghostty-studio-observation-v1");
+    update_frame(&mut digest, &option.key);
+    for entry in &option.entries {
+        update_frame(&mut digest, &entry.documentation);
+        update_frame(&mut digest, &entry.value);
+    }
+    hex(&digest.finalize())
+}
+
+fn update_frame(digest: &mut Sha256, value: &str) {
+    digest.update((value.len() as u64).to_be_bytes());
+    digest.update(value.as_bytes());
+}
+
 fn category_for(key: &str) -> &'static str {
     if key.starts_with("font-") || key.starts_with("adjust-font") {
-        "字体"
+        "font"
     } else if key.starts_with("cursor-") || key.starts_with("adjust-cursor") {
-        "光标"
-    } else if key.starts_with("window-") || key.starts_with("resize-") {
-        "窗口"
+        "cursor"
+    } else if key.starts_with("window-")
+        || key.starts_with("resize-")
+        || key.starts_with("tab-")
+        || key.starts_with("split-inherit-")
+    {
+        "window"
     } else if key.starts_with("quick-terminal-") {
-        "快速终端"
+        "quick-terminal"
     } else if key.starts_with("clipboard-") || key.contains("paste") || key.contains("copy") {
-        "隐私与安全"
-    } else if key.starts_with("mouse-") || key.contains("scroll") {
-        "鼠标与滚动"
+        "privacy-security"
+    } else if key.starts_with("mouse-") || key.contains("scroll") || key == "focus-follows-mouse" {
+        "mouse-scroll"
     } else if key.starts_with("shell-")
         || key == "command"
         || key == "initial-command"
         || key == "env"
     {
-        "Shell 与环境"
+        "shell-environment"
     } else if key.starts_with("macos-") {
-        "macOS"
+        "macos"
     } else if key.starts_with("gtk-") || key.starts_with("linux-") || key.starts_with("x11-") {
-        "Linux / GTK"
+        "linux-gtk"
     } else if key == "theme"
+        || key.starts_with("background-")
         || key == "background"
         || key == "foreground"
         || key == "palette"
+        || key == "split-divider-color"
         || key.starts_with("selection-")
     {
-        "外观"
+        "appearance"
     } else if key == "keybind" || key.starts_with("key-") {
-        "快捷键"
+        "keyboard"
     } else {
-        "高级"
+        "advanced"
     }
 }
 
@@ -175,38 +311,97 @@ fn risk_for(key: &str) -> &'static str {
     }
 }
 
-/// Positive allowlist for the generic renderer-to-Rust scalar edit path.
-/// New Ghostty keys intentionally default to non-editable until their side
-/// effects and override semantics have been reviewed.
-fn audited_contract(key: &str) -> Option<(&'static str, &'static [&'static str])> {
-    const NO_CHOICES: &[&str] = &[];
-    const CURSOR_STYLES: &[&str] = &["block", "bar", "underline", "block_hollow"];
-    match key {
-        "font-size"
-        | "minimum-contrast"
-        | "background-opacity"
-        | "cursor-opacity"
-        | "unfocused-split-opacity" => Some(("number", NO_CHOICES)),
-        "background"
-        | "foreground"
-        | "selection-foreground"
-        | "selection-background"
-        | "cursor-color"
-        | "split-divider-color" => Some(("color", NO_CHOICES)),
-        "cursor-style" => Some(("select", CURSOR_STYLES)),
-        _ => None,
+fn reference_reason(
+    key: &str,
+    repeatable: bool,
+    risk: &str,
+    platform: Option<&str>,
+    runtime_platform: &str,
+) -> &'static str {
+    if platform.is_some_and(|required| !platform_matches(required, runtime_platform)) {
+        "platform-unavailable"
+    } else if key == "theme" {
+        "needs-theme-picker"
+    } else if risk == "sensitive" {
+        "protected"
+    } else if repeatable {
+        "needs-list-editor"
+    } else if risk == "advanced" {
+        "advanced-setting"
+    } else {
+        "needs-editor"
     }
 }
 
-fn platform_for(description: &str) -> Option<String> {
+fn platform_matches(required: &str, runtime: &str) -> bool {
+    matches!((required, runtime), ("macOS", "macos") | ("Linux", "linux"))
+}
+
+fn platform_for(key: &str, description: &str) -> Option<String> {
+    let explicit = if key.starts_with("macos-")
+        || matches!(
+            key,
+            "auto-update"
+                | "auto-update-channel"
+                | "quick-terminal-animation-duration"
+                | "quick-terminal-screen"
+                | "undo-timeout"
+                | "window-colorspace"
+                | "window-position-x"
+                | "window-position-y"
+                | "window-save-state"
+                | "window-vsync"
+        ) {
+        Some("macOS")
+    } else if key.starts_with("gtk-")
+        || key.starts_with("linux-")
+        || key.starts_with("x11-")
+        || matches!(
+            key,
+            "async-backend"
+                | "class"
+                | "language"
+                | "quick-terminal-keyboard-interactivity"
+                | "quit-after-last-window-closed-delay"
+                | "window-show-tab-bar"
+                | "window-subtitle"
+        )
+    {
+        Some("Linux")
+    } else {
+        None
+    };
+    if let Some(platform) = explicit {
+        return Some(platform.to_string());
+    }
+
     let lower = description.to_ascii_lowercase();
-    if lower.contains("only supported on macos") || lower.contains("macos only") {
+    if lower.contains("only supported on macos")
+        || lower.contains("macos only")
+        || lower.contains("only supported currently on macos")
+        || lower.contains("currently only supported on macos")
+    {
         Some("macOS".to_string())
-    } else if lower.contains("only supported on linux") || lower.contains("gtk only") {
+    } else if lower.contains("only supported on linux")
+        || lower.contains("linux only")
+        || lower.contains("gtk only")
+        || lower.contains("only affects gtk")
+        || lower.contains("only supported currently on linux")
+    {
         Some("Linux".to_string())
     } else {
         None
     }
+}
+
+fn since_for(description: &str) -> Option<String> {
+    let marker = "Available since:";
+    let remainder = description.split_once(marker)?.1.trim_start();
+    let version = remainder
+        .split_whitespace()
+        .next()?
+        .trim_end_matches(|character: char| !character.is_ascii_digit());
+    (!version.is_empty()).then(|| version.to_string())
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -217,57 +412,112 @@ fn hex(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
 
+    fn test_catalog(key: &str, fingerprint: &str) -> Catalog {
+        let json = format!(
+            r#"{{
+              "formatVersion": 1,
+              "ghostty": ">=1.3.0, <1.4.0",
+              "options": [{{
+                "key": "{key}",
+                "observedFingerprints": ["{fingerprint}"],
+                "kind": "number",
+                "choices": [],
+                "repeatable": false,
+                "risk": "normal",
+                "capability": {{
+                  "editMode": "control",
+                  "reason": null,
+                  "activation": "reload",
+                  "constraintBehavior": "reject",
+                  "min": 0,
+                  "max": 100,
+                  "step": 1,
+                  "unit": null,
+                  "platform": null
+                }}
+              }}]
+            }}"#
+        );
+        Catalog::from_slice(json.as_bytes()).unwrap()
+    }
+
     #[test]
     fn parses_documentation_defaults_and_repeatable_values() {
         let source = "# Font fallback.\nfont-family = JetBrains Mono\n\n# Another fallback.\nfont-family = \n# Cursor.\ncursor-style = block\n";
-        let options = parse_document(source, true);
+        let options = parse_observed_document(source);
         let font = options
             .iter()
             .find(|option| option.key == "font-family")
             .unwrap();
         assert!(font.repeatable);
         assert_eq!(font.default_values, ["JetBrains Mono", ""]);
-        let cursor = options
-            .iter()
-            .find(|option| option.key == "cursor-style")
-            .unwrap();
-        assert_eq!(cursor.kind, "select");
-        assert!(cursor.choices.contains(&"bar".to_string()));
+        assert_eq!(font.entries[1].documentation, "Another fallback.");
     }
 
     #[test]
-    fn themes_are_classified_as_sensitive_full_config_inputs() {
-        let options = parse_document("theme = Example\n", true);
-        assert_eq!(options[0].key, "theme");
-        assert_eq!(options[0].risk, "sensitive");
-        assert!(!options[0].editable);
+    fn platform_metadata_covers_prefixed_and_cross_platform_named_settings() {
+        assert_eq!(platform_for("macos-hidden", ""), Some("macOS".to_string()));
+        assert_eq!(platform_for("gtk-titlebar", ""), Some("Linux".to_string()));
+        assert_eq!(platform_for("auto-update", ""), Some("macOS".to_string()));
+        assert_eq!(platform_for("language", ""), Some("Linux".to_string()));
+        assert_eq!(platform_for("font-size", ""), None);
     }
 
     #[test]
-    fn generic_edits_use_a_positive_allowlist() {
-        let options = parse_document(
-            "font-size = 13\nbackground-blur = false\ncommand = /bin/sh\nfuture-unknown-setting = value\n",
-            true,
-        );
-        let editable = options
-            .iter()
-            .map(|option| (option.key.as_str(), option.editable))
-            .collect::<std::collections::HashMap<_, _>>();
-        assert!(editable["font-size"]);
-        assert!(!editable["background-blur"]);
-        assert!(!editable["command"]);
-        assert!(!editable["future-unknown-setting"]);
-        let font_size = options
+    fn a_changed_setting_does_not_disable_an_unrelated_setting() {
+        let observed = parse_observed_document("# A.\nfont-size = 13\n# B.\nfuture = 1\n");
+        let font = observed
             .iter()
             .find(|option| option.key == "font-size")
             .unwrap();
-        assert_eq!(font_size.kind, "number");
+        let catalog = test_catalog("font-size", &observed_fingerprint(font));
+        let runtime = build_runtime_options(observed, Some("1.3.1"), "macos", &catalog);
+        let font = runtime
+            .iter()
+            .find(|option| option.key == "font-size")
+            .unwrap();
+        let future = runtime
+            .iter()
+            .find(|option| option.key == "future")
+            .unwrap();
+        assert!(font.editable);
+        assert_eq!(font.capability.edit_mode, "control");
+        assert!(!future.editable);
+        assert_eq!(future.capability.reason.as_deref(), Some("needs-editor"));
     }
 
     #[test]
-    fn schema_mismatch_disables_even_known_contract_keys() {
-        let options = parse_document("font-size = 13\nbackground = 000000\n", false);
-        assert!(options.iter().all(|option| !option.editable));
+    fn fingerprints_are_scoped_to_one_setting() {
+        let before = parse_observed_document("# A.\nfont-size = 13\n# B.\nfuture = 1\n");
+        let after = parse_observed_document("# A.\nfont-size = 13\n# B changed.\nfuture = 2\n");
+        let fingerprint = |options: &[ObservedOption], key: &str| {
+            observed_fingerprint(options.iter().find(|option| option.key == key).unwrap())
+        };
+        assert_eq!(
+            fingerprint(&before, "font-size"),
+            fingerprint(&after, "font-size")
+        );
+        assert_ne!(
+            fingerprint(&before, "future"),
+            fingerprint(&after, "future")
+        );
+    }
+
+    #[test]
+    fn themes_are_classified_as_protected_inputs() {
+        let catalog = Catalog::bundled().unwrap();
+        let options = build_runtime_options(
+            parse_observed_document("theme = Example\n"),
+            Some("1.3.1"),
+            "macos",
+            &catalog,
+        );
+        assert_eq!(options[0].risk, "sensitive");
+        assert!(!options[0].editable);
+        assert_eq!(
+            options[0].capability.reason.as_deref(),
+            Some("needs-theme-picker")
+        );
     }
 
     #[test]
@@ -288,13 +538,25 @@ mod tests {
             .map(|option| &option.key)
             .collect::<std::collections::HashSet<_>>();
         assert_eq!(unique.len(), schema.options.len());
-        if probe.version.as_deref() == Some(AUDITED_GHOSTTY_VERSION) {
+        assert!(schema
+            .options
+            .iter()
+            .all(|option| { option.editable == (option.capability.edit_mode == "control") }));
+        if probe.version.as_deref() == Some("1.3.1") {
             assert_eq!(schema.schema_hash, AUDITED_SCHEMA_HASH);
             assert!(schema
                 .options
                 .iter()
                 .find(|option| option.key == "font-size")
                 .is_some_and(|option| option.editable && option.kind == "number"));
+            assert!(
+                schema
+                    .options
+                    .iter()
+                    .filter(|option| option.editable)
+                    .count()
+                    >= 20
+            );
         }
     }
 }

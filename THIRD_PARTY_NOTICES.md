@@ -3,7 +3,7 @@
 Ghostty Studio includes open-source software maintained by other projects. The application is
 distributed under the MIT License, while its dependencies remain subject to their own licenses.
 
-The direct runtime dependencies used by version 0.2.0 are:
+The direct runtime dependencies used by version 0.3.0 are:
 
 | Component | Version | License |
 | --- | --- | --- |
