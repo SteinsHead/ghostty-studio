@@ -7,6 +7,38 @@ export type SettingKind =
   | "duration"
   | "text";
 
+export type SettingEditMode = "control" | "raw" | "none";
+
+export type SettingActivation =
+  | "reload"
+  | "reload-new-terminal"
+  | "restart"
+  | "unknown";
+
+export type SettingRestriction =
+  | "version-not-supported"
+  | "setting-changed"
+  | "needs-list-editor"
+  | "needs-theme-picker"
+  | "protected"
+  | "advanced-setting"
+  | "platform-unavailable"
+  | "needs-editor"
+  | "unrecognized-setting"
+  | null;
+
+export interface SettingCapability {
+  editMode: SettingEditMode;
+  reason: SettingRestriction;
+  activation: SettingActivation;
+  constraintBehavior: "reject" | "clamp" | "warn" | "ignore" | "unknown";
+  min: number | null;
+  max: number | null;
+  step: number | null;
+  unit: string | null;
+  platform: string | null;
+}
+
 export interface GhosttyProbe {
   available: boolean;
   executablePath: string | null;
@@ -48,7 +80,8 @@ export interface RuntimeOption {
   platform: string | null;
   since: string | null;
   risk: "normal" | "sensitive" | "advanced";
-  editable?: boolean;
+  editable: boolean;
+  capability: SettingCapability;
 }
 
 export interface RuntimeSchema {
@@ -65,7 +98,15 @@ export interface ConfigSession {
   revision: string;
   readOnly: boolean;
   values: Record<string, string[]>;
+  configuredSettings: ConfiguredSetting[];
+  unrecognizedSettingCount: number;
   diagnostics: string[];
+}
+
+export interface ConfiguredSetting {
+  key: string;
+  occurrenceCount: number;
+  valueExposure: "available" | "protected";
 }
 
 export interface ConfigNode {
@@ -124,6 +165,7 @@ export interface ChangePreview {
   unifiedDiff: string;
   diagnostics: string[];
   valid: boolean;
+  activation: SettingActivation;
 }
 
 export interface ApplyResult {
@@ -132,6 +174,7 @@ export interface ApplyResult {
   diagnostics: string[];
   warnings: string[];
   reloadRequired: boolean;
+  activation: SettingActivation;
 }
 
 export interface SnapshotInfo {
@@ -158,7 +201,7 @@ export interface Backend {
   loadConfigGraph(): Promise<ConfigGraph>;
   inspectExtensionManifest(manifest: string): Promise<ExtensionInspection>;
   openConfig(candidateId: string): Promise<ConfigSession>;
-  createConfig(candidateId: string): Promise<ConfigSession>;
+  createConfig(candidateId: string, locale?: "zh-CN" | "en"): Promise<ConfigSession>;
   stageChanges(
     sessionId: string,
     revision: string,
@@ -168,11 +211,13 @@ export interface Backend {
     sessionId: string,
     revision: string,
     token: string,
+    locale?: "zh-CN" | "en",
   ): Promise<ApplyResult>;
   listSnapshots(sessionId: string): Promise<SnapshotInfo[]>;
   restoreSnapshot(
     sessionId: string,
     revision: string,
     snapshotId: string,
+    locale?: "zh-CN" | "en",
   ): Promise<ApplyResult>;
 }

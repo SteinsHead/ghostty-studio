@@ -5,6 +5,7 @@ import type {
   RuntimeOption,
   RuntimeSchema,
 } from "./types";
+import { textForLocale, type AppLocale } from "./i18n";
 
 export type WorkspaceState = "ready" | "attention" | "blocked" | "demo";
 
@@ -46,7 +47,8 @@ const MAX_OPTION_KEYS = 5_000;
 const MAX_KEY_LENGTH = 256;
 
 export function isGenericallyEditable(option: RuntimeOption): boolean {
-  return option.editable !== false
+  return option.editable === true
+    && option.capability.editMode === "control"
     && !option.repeatable
     && option.risk === "normal";
 }
@@ -57,6 +59,7 @@ export function deriveWorkspaceSummary(
   session: ConfigSession | null,
   graph: ConfigGraph | null,
   desktop: boolean,
+  locale: AppLocale = "zh-CN",
 ): WorkspaceSummary {
   const options = schema?.options ?? [];
   const editableOptionCount = options.filter(isGenericallyEditable).length;
@@ -77,55 +80,55 @@ export function deriveWorkspaceSummary(
     return {
       ...base,
       state: "demo",
-      title: "先体验，再决定是否接入本机配置",
-      description: "当前是安全演示模式。你可以探索交互，但不会读取或写入本机文件。",
+      title: textForLocale(locale, "先体验，再决定是否接入本机配置", "Explore before connecting local configuration"),
+      description: textForLocale(locale, "当前是安全试用模式，可以体验交互，但不会读写本机文件。", "Try mode lets you explore the interface without reading or writing local files."),
     };
   }
   if (!environment?.ghostty.available) {
     return {
       ...base,
       state: "blocked",
-      title: "还没有找到 Ghostty",
-      description: "安装或重新打开 Ghostty 后重新检查；在此之前，配置保持只读。",
+      title: textForLocale(locale, "还没有找到 Ghostty", "Ghostty was not found"),
+      description: textForLocale(locale, "安装或重新打开 Ghostty 后再次检查；在此之前，配置保持只读。", "Install or reopen Ghostty, then check again. Configuration remains read-only until then."),
     };
   }
   if (!schema || options.length === 0) {
     return {
       ...base,
       state: "blocked",
-      title: "无法读取当前 Ghostty 的设置目录",
-      description: "Ghostty Studio 没有猜测未知设置，编辑已安全暂停。",
+      title: textForLocale(locale, "无法读取当前 Ghostty 的可用设置", "Ghostty settings could not be loaded"),
+      description: textForLocale(locale, "Studio 不会猜测未知设置，编辑已安全暂停。", "Studio does not guess unknown settings, so editing has been paused safely."),
     };
   }
   if (existingConfigCount === 0 || !session) {
     return {
       ...base,
       state: "attention",
-      title: "选择一个配置文件后开始",
-      description: "设置目录已经就绪，但还没有打开可编辑的配置层。",
+      title: textForLocale(locale, "选择一份配置后开始", "Choose a configuration to begin"),
+      description: textForLocale(locale, "可用设置已经就绪，但还没有打开配置文件。", "Available settings are ready, but no configuration file is open yet."),
     };
   }
   if (session.readOnly) {
     return {
       ...base,
       state: "attention",
-      title: "配置已打开，但当前只能查看",
-      description: "你仍然可以搜索和预览；写入会保持禁用，直到目标通过安全检查。",
+      title: textForLocale(locale, "配置已打开，但当前只能查看", "Configuration opened as read-only"),
+      description: textForLocale(locale, "仍可搜索和预览；选择通过安全检查的写入位置后即可编辑。", "You can still search and preview. Choose a writable location that passes safety checks to edit."),
     };
   }
   if (warnings > 0) {
     return {
       ...base,
       state: "attention",
-      title: "工作区可用，有几项信息值得确认",
-      description: "编辑仍可继续；保存前请查看兼容性与配置来源提示。",
+      title: textForLocale(locale, "工作区可用，有几项信息值得确认", "Workspace ready with a few notices"),
+      description: textForLocale(locale, "编辑仍可继续；保存前请查看兼容性与配置来源提示。", "Editing can continue. Review compatibility and source notices before saving."),
     };
   }
   return {
     ...base,
     state: "ready",
-    title: "工作区准备就绪",
-    description: "先在草稿中调整设置，确认预览与差异后再保存。",
+    title: textForLocale(locale, "工作区准备就绪", "Workspace ready"),
+    description: textForLocale(locale, "先在草稿中调整，确认预览与差异后再保存。", "Adjust the draft, review the preview and diff, then save."),
   };
 }
 
@@ -151,7 +154,8 @@ function optionFingerprint(option: RuntimeOption): string {
     option.platform,
     option.since,
     option.risk,
-    option.editable ?? null,
+    option.editable,
+    option.capability,
   ]);
   // This is a compact change detector, not a security or integrity primitive.
   let hash = 0x811c9dc5;

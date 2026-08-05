@@ -9,6 +9,7 @@ const preview: ChangePreview = {
   token: "preview-token",
   revision: "revision-2",
   valid: true,
+  activation: "restart",
   diagnostics: [],
   unifiedDiff: "@@ -1,2 +1,2 @@\n-background-opacity = 0.9\n+background-opacity = 1",
   changes: [
@@ -89,5 +90,25 @@ describe("save review copy", () => {
     expect(rawDiff?.open).toBe(false);
     expect(rawDiff?.querySelector("summary")?.textContent).toContain("查看配置文本变化");
     expect(rawDiff?.querySelector("pre")?.textContent).toBe(preview.unifiedDiff);
+  });
+
+  it("presents browser preview as a review, not a disabled save flow", () => {
+    act(() => root.render(
+      <ReviewPanel
+        changes={preview.changes}
+        preview={preview}
+        loading={false}
+        readOnly
+        previewOnly
+        onClose={() => undefined}
+        onApply={() => undefined}
+      />,
+    ));
+
+    expect(container.querySelector("h2")?.textContent).toBe("查看这些更改");
+    expect(container.textContent).toContain("更改已准备好");
+    expect(container.textContent).toContain("返回编辑");
+    expect(container.textContent).not.toContain("当前配置为只读");
+    expect(container.querySelector<HTMLButtonElement>(".review-footer .button--primary")).toBeNull();
   });
 });

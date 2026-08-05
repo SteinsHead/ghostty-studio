@@ -7,13 +7,32 @@ const v2Marker = "/* v0.2 product shell";
 const v2Start = css.indexOf(v2Marker);
 expect(v2Start, "missing v0.2 product-shell styles").toBeGreaterThanOrEqual(0);
 
-// The stylesheet intentionally keeps a small set of structural primitives from
-// the original shell and then overrides them in the v0.2 section. Compose only
-// the two desktop/base layers here: responsive and preference media queries are
-// separate states, not later declarations in the desktop cascade.
-const legacyBaseEnd = css.indexOf("@media");
-const v2BaseEnd = css.indexOf("@media", v2Start);
-const desktopCss = `${css.slice(0, legacyBaseEnd)}\n${css.slice(v2Start, v2BaseEnd)}`;
+// Resolve every desktop/base layer while excluding responsive and preference
+// media states. This catches cascade regressions where an older component rule
+// accidentally overrides the current design-system layer.
+function withoutMediaBlocks(source: string): string {
+  let cursor = 0;
+  let result = "";
+  while (cursor < source.length) {
+    const mediaStart = source.indexOf("@media", cursor);
+    if (mediaStart < 0) return result + source.slice(cursor);
+    result += source.slice(cursor, mediaStart);
+    const blockStart = source.indexOf("{", mediaStart);
+    expect(blockStart, "unterminated media query").toBeGreaterThan(mediaStart);
+    let depth = 1;
+    let index = blockStart + 1;
+    while (index < source.length && depth > 0) {
+      if (source[index] === "{") depth += 1;
+      if (source[index] === "}") depth -= 1;
+      index += 1;
+    }
+    expect(depth, "unterminated media-query block").toBe(0);
+    cursor = index;
+  }
+  return result;
+}
+
+const desktopCss = withoutMediaBlocks(css);
 
 function ruleBlocks(header: string): string[] {
   const escapedHeader = header.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -93,9 +112,9 @@ describe("v0.2 layout contract", () => {
     expectDeclaration(
       ".content-grid--with-preview",
       "grid-template-columns",
-      "minmax(480px, 760px) minmax(300px, 360px)",
+      "minmax(0, 1fr) clamp(320px, 28vw, 352px)",
     );
-    expectDeclaration(".content-grid--with-preview", "justify-content", "center");
+    expectDeclaration(".content-grid--with-preview", "justify-content", "stretch");
   });
 
   it("keeps the draft actions in a bounded workspace dock", () => {
@@ -120,7 +139,26 @@ describe("v0.2 layout contract", () => {
 
   it("keeps compact primary controls at the target-size baseline", () => {
     expectDeclaration(".sidebar-search.search-box input", "min-height", "26px");
-    expectDeclaration('.number-control input[type="range"]', "min-height", "24px");
-    expectDeclaration(".switch", "height", "24px");
+    expectDeclaration('.number-control input[type="range"]', "min-height", "var(--control-min-height)");
+    expectDeclaration(".switch", "height", "var(--control-min-height)");
+    expectDeclaration(".switch", "width", "44px");
+  });
+
+  it("anchors settings controls to the title and reserves a stable action column", () => {
+    expectDeclaration(".setting-row", "align-items", "start");
+    expectDeclaration(
+      ".setting-row",
+      "grid-template-columns",
+      "minmax(0, 1fr) clamp(252px, 42%, 280px)",
+    );
+    expectDeclaration(".setting-input", "display", "grid");
+    expectDeclaration(".setting-input", "grid-template-columns", "minmax(0, 1fr) 32px");
+    expectDeclaration(".setting-inspector", "grid-column", "1 / -1");
+  });
+
+  it("removes empty feedback spacing and keeps the switch state visible", () => {
+    expectDeclaration(".workspace-feedback:empty", "display", "none");
+    expectDeclaration(".workspace-feedback:empty", "margin", "0");
+    expectDeclaration('.switch[aria-checked="true"]::before', "background", "var(--accent-strong)");
   });
 });

@@ -2,6 +2,34 @@
 
 Ghostty Studio follows semantic versioning while the project is in preview.
 
+## 0.3.0 — 2026-08-05
+
+### Added
+
+- Add a system-aware Simplified Chinese and English interface without discarding the current draft.
+- Add concise bilingual names and descriptions for the complete Ghostty 1.3.1 settings catalog.
+- Add a strict, data-only capability contract for 29 reviewed macOS settings, including control
+  type, valid range, write behavior, and activation requirements.
+
+### Changed
+
+- Refine spacing, typography, responsive behavior, keyboard focus, and long-content handling across
+  the editor and supporting panels.
+- Align setting controls to their titles, unify field and button geometry, and replace raw color,
+  range, switch, and language controls with a coherent desktop control system.
+- Separate the focused editing journey from the complete searchable settings reference.
+- Explain protected, repeated, platform-specific, and not-yet-editable settings without presenting
+  controls that cannot be used.
+- Keep category identifiers independent from display language so saved navigation survives language
+  changes and future copy updates.
+
+### Safety
+
+- Keep compatibility decisions scoped to each setting, so unrelated Ghostty updates do not lock the
+  editor or invalidate an unaffected review.
+- Apply the same type, range, and duplicate checks to snapshot restores as normal edits.
+- Expose only recognized configuration names to the WebView; unknown names and values stay private.
+
 ## 0.2.0 — 2026-08-04
 
 ### Changed

@@ -21,10 +21,43 @@ const opacityOption: RuntimeOption = {
   since: null,
   risk: "normal",
   editable: true,
+  capability: {
+    editMode: "control",
+    reason: null,
+    activation: "restart",
+    constraintBehavior: "clamp",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    unit: "percent",
+    platform: null,
+  },
 };
 
 function optionWithKey(key: string): RuntimeOption {
-  return { ...opacityOption, key };
+  if (key === "font-size") {
+    return {
+      ...opacityOption,
+      key,
+      capability: {
+        ...opacityOption.capability,
+        activation: "reload",
+        constraintBehavior: "reject",
+        min: 1,
+        max: 255,
+        step: 0.5,
+        unit: "pt",
+      },
+    };
+  }
+  return {
+    ...opacityOption,
+    key,
+    capability: {
+      ...opacityOption.capability,
+      min: key === "unfocused-split-opacity" ? 0.15 : 0,
+    },
+  };
 }
 
 function SliderHarness({ onInput }: { onInput(value: string): void }) {
@@ -117,6 +150,8 @@ describe("opacity preview stability", () => {
       });
 
       expect(rangeNode.value).toBe(value);
+      expect(Number.parseFloat(rangeNode.style.getPropertyValue("--range-progress")))
+        .toBeCloseTo(Number(value) * 100);
       expect(number!.value).toBe(String(Math.round(Number(value) * 100)));
       expect(container.querySelector(".terminal-screen")).toBe(screenNode);
       expect(screenNode.firstElementChild).toBe(firstLine);
@@ -131,20 +166,20 @@ describe("opacity preview stability", () => {
   });
 
   it.each([
-    "background-opacity",
-    "cursor-opacity",
-    "unfocused-split-opacity",
-  ])("keeps %s controls on the same bounded scale", (key) => {
+    ["background-opacity", "0", "0"],
+    ["cursor-opacity", "0", "0"],
+    ["unfocused-split-opacity", "0.15", "15"],
+  ])("keeps %s controls on its audited scale", (key, rangeMin, numberMin) => {
     act(() => root.render(
       <SettingControl option={optionWithKey(key)} value="0.9" onChange={() => undefined} />,
     ));
 
     const range = container.querySelector<HTMLInputElement>('input[type="range"]');
     const number = container.querySelector<HTMLInputElement>('input[type="number"]');
-    expect(range?.min).toBe("0");
+    expect(range?.min).toBe(rangeMin);
     expect(range?.max).toBe("1");
     expect(range?.step).toBe("0.01");
-    expect(number?.min).toBe("0");
+    expect(number?.min).toBe(numberMin);
     expect(number?.max).toBe("100");
     expect(number?.step).toBe("1");
   });
@@ -171,6 +206,8 @@ describe("opacity preview stability", () => {
     ));
 
     expect(container.querySelector('input[type="range"]')).toBeNull();
+    expect(container.querySelector(".number-control--compact")).not.toBeNull();
+    expect(container.querySelector(".number-value-field")?.textContent).toContain("pt");
   });
 
   it("marks an assignment for removal instead of writing an empty value", () => {

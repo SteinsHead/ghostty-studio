@@ -1,5 +1,6 @@
 import { memo, useId } from "react";
 import { ChevronRight, GitBranch, Wifi } from "lucide-react";
+import { useI18n } from "../i18n";
 import { compositePreviewBackground } from "../previewColor";
 
 interface TerminalPreviewProps {
@@ -18,6 +19,7 @@ function boundedNumber(value: string | undefined, fallback: number, minimum: num
 }
 
 export const TerminalPreview = memo(function TerminalPreview({ values }: TerminalPreviewProps) {
+  const { text } = useI18n();
   const descriptionId = useId();
   const background = cssColor(values.background, "#1e1e2e");
   const foreground = cssColor(values.foreground, "#cdd6f4");
@@ -30,7 +32,7 @@ export const TerminalPreview = memo(function TerminalPreview({ values }: Termina
     <div
       className="terminal-shell"
       role="img"
-      aria-label="终端外观模拟预览"
+      aria-label={text("终端外观模拟预览", "Simulated terminal appearance")}
       aria-describedby={descriptionId}
     >
       <div className="terminal-titlebar" aria-hidden="true">
@@ -75,7 +77,10 @@ export const TerminalPreview = memo(function TerminalPreview({ values }: Termina
         </div>
       </div>
       <span className="sr-only" id={descriptionId}>
-        模拟效果：仅反映颜色、字体、间距与光标，不运行 Ghostty，也不计算多配置层的最终生效值。
+        {text(
+          "模拟效果仅反映颜色、字体、间距与光标。它不会运行 Ghostty，也不能计算多份配置的最终生效值。",
+          "This simulation reflects color, font, spacing, and cursor settings. It does not run Ghostty or calculate final values across multiple configuration files.",
+        )}
       </span>
     </div>
   );

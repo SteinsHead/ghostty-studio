@@ -19,8 +19,8 @@ use domain::{
 };
 use error::CommandError;
 use models::{
-    ApplyResult, ChangePreview, ConfigCandidate, ConfigSession, DraftChange, EnvironmentReport,
-    RuntimeSchema,
+    ApplyResult, ChangePreview, ConfigCandidate, ConfigSession, ConfiguredSetting, DraftChange,
+    EnvironmentReport, RuntimeOption, RuntimeSchema,
 };
 use tauri::{Manager, State};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
@@ -44,6 +44,7 @@ struct StagedCandidate {
     changes: Vec<DraftChange>,
     diagnostics: Vec<String>,
     valid: bool,
+    activation: String,
 }
 
 struct PreparedSnapshotRestore {
@@ -57,6 +58,8 @@ struct PreparedSnapshotRestore {
 struct CurrentRuntimeContract {
     executable: PathBuf,
     editable_keys: HashSet<String>,
+    editable_options: HashMap<String, RuntimeOption>,
+    changed_writable_keys: HashSet<String>,
 }
 
 #[derive(Default)]
@@ -317,24 +320,62 @@ fn open_config_session(
     let revision = revision(&bytes);
     let session_id = Uuid::new_v4().to_string();
     let read_only = !candidate.writable || candidate.symlink;
-    let safe_keys = editable_scalar_keys(state)?;
+    let (safe_keys, known_keys) = {
+        let schema = state
+            .runtime_schema
+            .lock()
+            .map_err(|_| CommandError::new("state_poisoned", "schema state is unavailable"))?;
+        let schema = schema.as_ref().ok_or_else(|| {
+            CommandError::new(
+                "schema_not_loaded",
+                "the runtime schema must be loaded before configuration values can be exposed or edited",
+            )
+        })?;
+        let known_keys = schema
+            .options
+            .iter()
+            .filter(|option| is_public_setting_key(&option.key))
+            .map(|option| option.key.clone())
+            .collect::<HashSet<_>>();
+        (editable_keys_from_schema(schema), known_keys)
+    };
     let all_values = document.values();
+    let configured_settings = all_values
+        .iter()
+        .filter(|(key, _)| known_keys.contains(*key))
+        .map(|(key, configured_values)| ConfiguredSetting {
+            key: key.clone(),
+            occurrence_count: configured_values.len(),
+            value_exposure: if safe_keys.contains(key) {
+                "available"
+            } else {
+                "protected"
+            }
+            .to_string(),
+        })
+        .collect();
+    let unrecognized_setting_count = all_values
+        .keys()
+        .filter(|key| !known_keys.contains(*key))
+        .count();
     let hidden_value_count = all_values
         .keys()
-        .filter(|key| !safe_keys.contains(*key))
+        .filter(|key| known_keys.contains(*key) && !safe_keys.contains(*key))
         .count();
     let values = all_values
         .into_iter()
-        .filter(|(key, _)| safe_keys.contains(key))
+        .filter(|(key, _)| safe_keys.contains(key) && known_keys.contains(key))
         .collect();
     let mut diagnostics = Vec::new();
     if candidate.symlink {
-        diagnostics
-            .push("该配置是符号链接；当前会话只读，后续高级流程会显示并授权真实目标。".to_string());
+        diagnostics.push("这份配置通过符号链接载入，因此当前只能查看。".to_string());
     }
     if hidden_value_count > 0 {
+        diagnostics.push(format!("{hidden_value_count} 个设置的值已隐藏。"));
+    }
+    if unrecognized_setting_count > 0 {
         diagnostics.push(format!(
-            "为保护敏感信息，{hidden_value_count} 个高风险、可重复或未知设置的值未发送到 WebView。"
+            "另有 {unrecognized_setting_count} 个 Ghostty 当前未识别的配置项；名称和值均未载入界面。"
         ));
     }
     let opened = OpenSession {
@@ -372,6 +413,8 @@ fn open_config_session(
         revision,
         read_only,
         values,
+        configured_settings,
+        unrecognized_setting_count,
         diagnostics,
     })
 }
@@ -379,9 +422,11 @@ fn open_config_session(
 #[tauri::command]
 async fn create_config(
     candidate_id: String,
+    locale: String,
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<ConfigSession, CommandError> {
+    let locale = UiLocale::parse(&locale)?;
     let _mutation_guard = acquire_mutation(&state)?;
     if candidate_id.len() > 128 {
         return Err(CommandError::new(
@@ -415,14 +460,23 @@ async fn create_config(
         ));
     }
     let visible_path = display_path(&path);
-    require_native_confirmation(
-        &app,
-        format!(
-            "将在 {visible_path} 创建一个 0 字节的 Ghostty 配置文件。\n\n新目录权限为 0700，文件权限为 0600。若另一个程序先创建目标，Ghostty Studio 会停止，绝不会覆盖。"
+    let (message, confirm_label, cancel_label) = match locale {
+        UiLocale::ZhCn => (
+            format!(
+                "将在 {visible_path} 创建一个空的 Ghostty 配置文件。\n\n新目录权限为 0700，文件权限为 0600。如果另一个程序先创建目标，Ghostty Studio 会停止且不会覆盖。"
+            ),
+            "创建配置".to_string(),
+            "取消".to_string(),
         ),
-        "创建配置",
-    )
-    .await?;
+        UiLocale::En => (
+            format!(
+                "Create an empty Ghostty configuration at {visible_path}.\n\nNew folders use 0700 permissions and the file uses 0600. If another program creates the destination first, Ghostty Studio will stop without overwriting it."
+            ),
+            "Create configuration".to_string(),
+            "Cancel".to_string(),
+        ),
+    };
+    require_native_confirmation(&app, message, confirm_label, cancel_label).await?;
     let confirmed_candidate = fresh_creation_candidate(&candidate_id, &issued_candidate)?;
     if confirmed_candidate.path != candidate.path {
         return Err(CommandError::new(
@@ -753,6 +807,15 @@ fn stage_changes(
             .remove(&change.key)
             .unwrap_or_default();
         let next = change.after.first().cloned().unwrap_or_default();
+        if !next.is_empty() {
+            let option = contract.editable_options.get(&change.key).ok_or_else(|| {
+                CommandError::new(
+                    "setting_requires_specialized_editor",
+                    format!("{} is not available to the scalar editor", change.key),
+                )
+            })?;
+            validate_setting_value(option, &next)?;
+        }
         if next.is_empty() {
             candidate_document.remove_scalar(&change.key)?;
         } else {
@@ -789,6 +852,7 @@ fn stage_changes(
         safe_write::validate_candidate(&contract.executable, &session.path, &candidate_bytes)?;
     let token = Uuid::new_v4().to_string();
     let unified_diff = render_setting_diff(&trusted_changes);
+    let activation = activation_for_changes(&trusted_changes, &contract.editable_options);
     let staged = StagedCandidate {
         session_id: session_id.clone(),
         revision: revision.clone(),
@@ -796,6 +860,7 @@ fn stage_changes(
         changes: trusted_changes.clone(),
         diagnostics: validation.diagnostics.clone(),
         valid: validation.valid,
+        activation: activation.clone(),
     };
     let mut stages = state
         .stages
@@ -817,6 +882,7 @@ fn stage_changes(
         unified_diff,
         diagnostics: validation.diagnostics,
         valid: validation.valid,
+        activation,
     })
 }
 
@@ -826,8 +892,10 @@ async fn apply_changes(
     session_id: String,
     revision: String,
     token: String,
+    locale: String,
     state: State<'_, AppState>,
 ) -> Result<ApplyResult, CommandError> {
+    let locale = UiLocale::parse(&locale)?;
     require_canonical_uuid(&session_id, "invalid_session_id", "session id")?;
     require_canonical_uuid(&token, "invalid_stage_token", "review token")?;
     require_revision(&revision)?;
@@ -865,23 +933,41 @@ async fn apply_changes(
         ));
     }
     let contract = current_runtime_contract(&state)?;
+    require_unchanged_review_contract(&stage.changes, &contract.changed_writable_keys)?;
     require_current_change_keys(&stage.changes, &contract.editable_keys)?;
-    require_native_confirmation(
-        &app,
-        format!(
-            "将保存 {} 项修改：{}。\n\n保存前会自动创建快照。",
-            stage.changes.len(),
-            stage
-                .changes
-                .iter()
-                .map(|change| change.key.as_str())
-                .collect::<Vec<_>>()
-                .join("、")
+    let changed_keys = stage
+        .changes
+        .iter()
+        .map(|change| change.key.as_str())
+        .collect::<Vec<_>>();
+    let (message, confirm_label, cancel_label) = match locale {
+        UiLocale::ZhCn => (
+            format!(
+                "将保存 {} 项修改：{}。\n\n保存前会自动创建恢复点。",
+                stage.changes.len(),
+                changed_keys.join("、")
+            ),
+            "保存配置".to_string(),
+            "取消".to_string(),
         ),
-        "写入配置",
-    )
-    .await?;
+        UiLocale::En => (
+            format!(
+                "Save {} {}: {}.\n\nA restore point will be created first.",
+                stage.changes.len(),
+                if stage.changes.len() == 1 {
+                    "change"
+                } else {
+                    "changes"
+                },
+                changed_keys.join(", ")
+            ),
+            "Save configuration".to_string(),
+            "Cancel".to_string(),
+        ),
+    };
+    require_native_confirmation(&app, message, confirm_label, cancel_label).await?;
     let contract = current_runtime_contract(&state)?;
+    require_unchanged_review_contract(&stage.changes, &contract.changed_writable_keys)?;
     require_current_change_keys(&stage.changes, &contract.editable_keys)?;
     let current_validation =
         safe_write::validate_candidate(&contract.executable, &session.path, &stage.bytes)?;
@@ -933,6 +1019,7 @@ async fn apply_changes(
         snapshot_id: outcome.snapshot_id,
         diagnostics,
         warnings: outcome.warnings,
+        activation: stage.activation,
         reload_required: true,
     })
 }
@@ -953,8 +1040,10 @@ async fn restore_snapshot(
     session_id: String,
     revision: String,
     snapshot_id: String,
+    locale: String,
     state: State<'_, AppState>,
 ) -> Result<ApplyResult, CommandError> {
+    let locale = UiLocale::parse(&locale)?;
     require_canonical_uuid(&snapshot_id, "invalid_snapshot_id", "snapshot id")?;
     require_revision(&revision)?;
     let _mutation_guard = acquire_mutation(&state)?;
@@ -980,25 +1069,42 @@ async fn restore_snapshot(
         &revision,
         &snapshot_id,
     )?;
-    enforce_snapshot_restore_policy(&prepared, &contract.editable_keys)?;
-    let key_summary = if prepared.changed_keys.is_empty() {
-        "仅文本、注释或格式发生变化".to_string()
-    } else {
-        prepared.changed_keys.join("、")
+    enforce_snapshot_restore_policy(&prepared, &contract.editable_options)?;
+    let key_summary = match locale {
+        UiLocale::ZhCn if prepared.changed_keys.is_empty() => {
+            "仅文本、注释或格式发生变化".to_string()
+        }
+        UiLocale::En if prepared.changed_keys.is_empty() => {
+            "text, comments, or formatting only".to_string()
+        }
+        UiLocale::ZhCn => prepared.changed_keys.join("、"),
+        UiLocale::En => prepared.changed_keys.join(", "),
     };
-    require_native_confirmation(
-        &app,
-        format!(
-            "将恢复快照 {}（{} bytes）。\n\n包含的修改：{}\n\n恢复前会备份当前配置，并确认文件没有被其他程序修改。",
-            &prepared.snapshot.id[..8],
-            prepared.snapshot.size_bytes,
-            key_summary
+    let (message, confirm_label, cancel_label) = match locale {
+        UiLocale::ZhCn => (
+            format!(
+                "将恢复版本 {}（{} bytes）。\n\n包含的修改：{}\n\n恢复前会备份当前配置，并确认文件没有被其他程序修改。",
+                &prepared.snapshot.id[..8],
+                prepared.snapshot.size_bytes,
+                key_summary
+            ),
+            "恢复配置".to_string(),
+            "取消".to_string(),
         ),
-        "恢复快照",
-    )
-    .await?;
+        UiLocale::En => (
+            format!(
+                "Restore version {} ({} bytes).\n\nChanges: {}\n\nThe current configuration will be backed up first, and Studio will confirm that no other program changed the file.",
+                &prepared.snapshot.id[..8],
+                prepared.snapshot.size_bytes,
+                key_summary
+            ),
+            "Restore configuration".to_string(),
+            "Cancel".to_string(),
+        ),
+    };
+    require_native_confirmation(&app, message, confirm_label, cancel_label).await?;
     let contract = current_runtime_contract(&state)?;
-    enforce_snapshot_restore_policy(&prepared, &contract.editable_keys)?;
+    enforce_snapshot_restore_policy(&prepared, &contract.editable_options)?;
     let current_validation = safe_write::validate_candidate(
         &contract.executable,
         &session.path,
@@ -1014,12 +1120,14 @@ async fn restore_snapshot(
         ));
     }
     prepared.validation = current_validation;
+    let activation = activation_for_keys(&prepared.changed_keys, &contract.editable_options);
     apply_prepared_snapshot_restore(
         &data_root,
         &contract.executable,
         &session_id,
         &revision,
         prepared,
+        activation,
         &state,
     )
 }
@@ -1070,6 +1178,7 @@ fn restore_snapshot_for_session(
         session_id,
         expected_revision,
         prepared,
+        "reload".to_string(),
         state,
     )
 }
@@ -1138,12 +1247,12 @@ fn prepare_snapshot_restore(
 
 fn enforce_snapshot_restore_policy(
     prepared: &PreparedSnapshotRestore,
-    safe_keys: &HashSet<String>,
+    options: &HashMap<String, RuntimeOption>,
 ) -> Result<(), CommandError> {
     let blocked_count = prepared
         .changed_keys
         .iter()
-        .filter(|key| !safe_keys.contains(*key))
+        .filter(|key| !options.contains_key(*key))
         .count();
     if blocked_count > 0 {
         return Err(CommandError::new(
@@ -1152,6 +1261,40 @@ fn enforce_snapshot_restore_policy(
                 "这个快照包含 {blocked_count} 个当前版本无法安全恢复的设置，因此不能自动恢复。"
             ),
         ));
+    }
+
+    let current_document = ConfigDocument::parse(&prepared.current_bytes)?;
+    let restored_document = ConfigDocument::parse(&prepared.restored_bytes)?;
+    let restored_values = restored_document.values();
+    for key in &prepared.changed_keys {
+        let option = options.get(key).ok_or_else(|| {
+            CommandError::new(
+                "snapshot_requires_specialized_restore",
+                "这个快照包含当前版本无法安全恢复的设置。",
+            )
+        })?;
+        if current_document.duplicate_count(key) > 1 || restored_document.duplicate_count(key) > 1 {
+            return Err(CommandError::new(
+                "snapshot_requires_specialized_restore",
+                "这个快照涉及多处重复设置，需要先在配置文件中确认来源。",
+            ));
+        }
+        if let Some(values) = restored_values.get(key) {
+            if values.len() > 1 {
+                return Err(CommandError::new(
+                    "snapshot_requires_specialized_restore",
+                    "这个快照包含多值设置，需要专用编辑方式。",
+                ));
+            }
+            if let Some(value) = values.first() {
+                validate_setting_value(option, value).map_err(|_| {
+                    CommandError::new(
+                        "snapshot_setting_invalid",
+                        format!("快照中的 {key} 不符合当前 Ghostty 的取值规则。"),
+                    )
+                })?;
+            }
+        }
     }
     Ok(())
 }
@@ -1162,6 +1305,7 @@ fn apply_prepared_snapshot_restore(
     session_id: &str,
     expected_revision: &str,
     prepared: PreparedSnapshotRestore,
+    activation: String,
     state: &AppState,
 ) -> Result<ApplyResult, CommandError> {
     let session = open_session(state, session_id)?;
@@ -1219,6 +1363,7 @@ fn apply_prepared_snapshot_restore(
         snapshot_id: outcome.snapshot_id,
         diagnostics,
         warnings: outcome.warnings,
+        activation,
         reload_required: true,
     })
 }
@@ -1501,6 +1646,7 @@ fn diagnostic_summary(diagnostics: &[String]) -> String {
     }
 }
 
+#[cfg(test)]
 fn editable_scalar_keys(state: &AppState) -> Result<HashSet<String>, CommandError> {
     let schema = state
         .runtime_schema
@@ -1524,17 +1670,20 @@ fn current_runtime_contract(state: &AppState) -> Result<CurrentRuntimeContract, 
         )
     })?;
     let fresh_schema = schema::load(&executable, probe.version)?;
-    let editable_keys = reconcile_runtime_schema(state, fresh_schema)?;
+    let editable_options = editable_options_from_schema(&fresh_schema);
+    let (editable_keys, changed_writable_keys) = reconcile_runtime_schema(state, fresh_schema)?;
     Ok(CurrentRuntimeContract {
         executable,
         editable_keys,
+        editable_options,
+        changed_writable_keys,
     })
 }
 
 fn reconcile_runtime_schema(
     state: &AppState,
     fresh_schema: RuntimeSchema,
-) -> Result<HashSet<String>, CommandError> {
+) -> Result<(HashSet<String>, HashSet<String>), CommandError> {
     let editable_keys = editable_keys_from_schema(&fresh_schema);
     let mut cached_schema = state
         .runtime_schema
@@ -1546,38 +1695,171 @@ fn reconcile_runtime_schema(
             "the runtime schema must be loaded before a writable operation",
         )
     })?;
-    if cached.ghostty_version != fresh_schema.ghostty_version
-        || cached.schema_hash != fresh_schema.schema_hash
-    {
-        *cached_schema = Some(fresh_schema);
-        drop(cached_schema);
+    let cached_options = editable_options_from_schema(cached);
+    let fresh_options = editable_options_from_schema(&fresh_schema);
+    let changed_writable_keys = cached_options
+        .keys()
+        .chain(fresh_options.keys())
+        .filter(|key| cached_options.get(*key) != fresh_options.get(*key))
+        .cloned()
+        .collect::<HashSet<_>>();
+    *cached_schema = Some(fresh_schema);
+    drop(cached_schema);
+    if !changed_writable_keys.is_empty() {
         state
             .stages
             .lock()
             .map_err(|_| CommandError::new("state_poisoned", "stage state is unavailable"))?
-            .clear();
-        return Err(CommandError::new(
-            "ghostty_contract_changed",
-            "the installed Ghostty version or schema changed while the application was open; all reviews were invalidated and the schema must be reloaded",
-        ));
+            .retain(|_, stage| {
+                !stage
+                    .changes
+                    .iter()
+                    .any(|change| changed_writable_keys.contains(&change.key))
+            });
     }
-    drop(cached_schema);
     if editable_keys.is_empty() {
         return Err(CommandError::new(
             "ghostty_contract_read_only",
             "the current Ghostty version and schema do not match a writable audited contract",
         ));
     }
-    Ok(editable_keys)
+    Ok((editable_keys, changed_writable_keys))
+}
+
+fn require_unchanged_review_contract(
+    changes: &[DraftChange],
+    changed_writable_keys: &HashSet<String>,
+) -> Result<(), CommandError> {
+    if changes
+        .iter()
+        .any(|change| changed_writable_keys.contains(&change.key))
+    {
+        return Err(CommandError::new(
+            "ghostty_contract_changed",
+            "a reviewed Ghostty setting changed while the application was open; review it again before saving",
+        ));
+    }
+    Ok(())
+}
+
+fn is_public_setting_key(key: &str) -> bool {
+    !key.is_empty()
+        && key.len() <= 128
+        && key
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
 }
 
 fn editable_keys_from_schema(schema: &RuntimeSchema) -> HashSet<String> {
+    editable_options_from_schema(schema).into_keys().collect()
+}
+
+fn editable_options_from_schema(schema: &RuntimeSchema) -> HashMap<String, RuntimeOption> {
     schema
         .options
         .iter()
-        .filter(|option| option.editable && !option.repeatable && option.risk == "normal")
-        .map(|option| option.key.clone())
+        .filter(|option| {
+            option.editable
+                && option.capability.edit_mode == "control"
+                && !option.repeatable
+                && option.risk == "normal"
+        })
+        .map(|option| (option.key.clone(), option.clone()))
         .collect()
+}
+
+fn validate_setting_value(option: &RuntimeOption, value: &str) -> Result<(), CommandError> {
+    if value.chars().any(char::is_control) {
+        return Err(CommandError::new(
+            "invalid_setting_value",
+            format!("{} contains unsupported control characters", option.key),
+        ));
+    }
+
+    let numeric_value = match option.kind.as_str() {
+        "boolean" if !matches!(value, "true" | "false") => {
+            return Err(CommandError::new(
+                "invalid_setting_value",
+                format!("{} expects true or false", option.key),
+            ));
+        }
+        "integer" => Some(
+            value
+                .parse::<i64>()
+                .map(|number| number as f64)
+                .map_err(|_| {
+                    CommandError::new(
+                        "invalid_setting_value",
+                        format!("{} expects a whole number", option.key),
+                    )
+                })?,
+        ),
+        "number" => Some(value.parse::<f64>().map_err(|_| {
+            CommandError::new(
+                "invalid_setting_value",
+                format!("{} expects a number", option.key),
+            )
+        })?),
+        "select" if !option.choices.iter().any(|choice| choice == value) => {
+            return Err(CommandError::new(
+                "invalid_setting_value",
+                format!("{} is not one of the supported choices", option.key),
+            ));
+        }
+        _ => None,
+    };
+
+    if let Some(number) = numeric_value {
+        if !number.is_finite() {
+            return Err(CommandError::new(
+                "invalid_setting_value",
+                format!("{} expects a finite number", option.key),
+            ));
+        }
+        if option
+            .capability
+            .min
+            .is_some_and(|minimum| number < minimum)
+            || option
+                .capability
+                .max
+                .is_some_and(|maximum| number > maximum)
+        {
+            return Err(CommandError::new(
+                "value_out_of_range",
+                format!("{} is outside its supported range", option.key),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn activation_for_changes(
+    changes: &[DraftChange],
+    options: &HashMap<String, RuntimeOption>,
+) -> String {
+    let keys = changes.iter().map(|change| &change.key).collect::<Vec<_>>();
+    activation_for_key_refs(&keys, options)
+}
+
+fn activation_for_keys(keys: &[String], options: &HashMap<String, RuntimeOption>) -> String {
+    let keys = keys.iter().collect::<Vec<_>>();
+    activation_for_key_refs(&keys, options)
+}
+
+fn activation_for_key_refs(keys: &[&String], options: &HashMap<String, RuntimeOption>) -> String {
+    keys.iter()
+        .filter_map(|key| options.get(key.as_str()))
+        .map(|option| option.capability.activation.as_str())
+        .max_by_key(|activation| match *activation {
+            "restart" => 4,
+            "unknown" => 3,
+            "reload-new-terminal" => 2,
+            "reload" => 1,
+            _ => 0,
+        })
+        .unwrap_or("reload")
+        .to_string()
 }
 
 fn require_current_change_keys(
@@ -1631,20 +1913,40 @@ fn display_path(path: &Path) -> String {
     path.to_string_lossy().to_string()
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum UiLocale {
+    ZhCn,
+    En,
+}
+
+impl UiLocale {
+    fn parse(value: &str) -> Result<Self, CommandError> {
+        match value {
+            "zh-CN" => Ok(Self::ZhCn),
+            "en" => Ok(Self::En),
+            _ => Err(CommandError::new(
+                "invalid_locale",
+                "interface locale must be zh-CN or en",
+            )),
+        }
+    }
+}
+
 async fn require_native_confirmation(
     app: &tauri::AppHandle,
     message: String,
-    confirm_label: &'static str,
+    confirm_label: String,
+    cancel_label: String,
 ) -> Result<(), CommandError> {
     let app = app.clone();
     let confirmed = tauri::async_runtime::spawn_blocking(move || {
         app.dialog()
             .message(message)
-            .title(confirm_label)
+            .title(confirm_label.clone())
             .kind(MessageDialogKind::Warning)
             .buttons(MessageDialogButtons::OkCancelCustom(
-                confirm_label.to_string(),
-                "取消".to_string(),
+                confirm_label,
+                cancel_label,
             ))
             .blocking_show()
     })
@@ -1731,6 +2033,51 @@ fn allowed_navigation(url: &tauri::Url) -> bool {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn native_dialog_locale_is_a_closed_enum() {
+        assert_eq!(UiLocale::parse("zh-CN").unwrap(), UiLocale::ZhCn);
+        assert_eq!(UiLocale::parse("en").unwrap(), UiLocale::En);
+        let error = UiLocale::parse("en-US").unwrap_err();
+        assert_eq!(error.code, "invalid_locale");
+    }
+
+    fn test_capability(
+        edit_mode: &str,
+        reason: Option<&str>,
+        minimum: Option<f64>,
+        maximum: Option<f64>,
+    ) -> models::RuntimeCapability {
+        models::RuntimeCapability {
+            edit_mode: edit_mode.to_string(),
+            reason: reason.map(str::to_string),
+            activation: "reload".to_string(),
+            constraint_behavior: "reject".to_string(),
+            min: minimum,
+            max: maximum,
+            step: (minimum.is_some() || maximum.is_some()).then_some(1.0),
+            unit: None,
+            platform: None,
+        }
+    }
+
+    fn test_runtime_option(key: &str) -> models::RuntimeOption {
+        models::RuntimeOption {
+            key: key.to_string(),
+            description: String::new(),
+            default_values: vec!["13".to_string()],
+            current_values: vec!["13".to_string()],
+            category: "font".to_string(),
+            kind: "number".to_string(),
+            choices: Vec::new(),
+            repeatable: false,
+            platform: None,
+            since: None,
+            risk: "normal".to_string(),
+            editable: true,
+            capability: test_capability("control", None, Some(1.0), Some(255.0)),
+        }
+    }
 
     #[test]
     fn every_registered_command_has_a_manifest_and_capability_permission() {
@@ -1862,26 +2209,44 @@ mod tests {
     #[test]
     fn runtime_contract_change_invalidates_reviews_fail_closed() {
         let state = AppState::default();
+        let original = test_runtime_option("font-size");
         *state.runtime_schema.lock().unwrap() = Some(RuntimeSchema {
             ghostty_version: Some("1.3.1".to_string()),
             schema_hash: "old-schema".to_string(),
             diagnostics: Vec::new(),
-            options: Vec::new(),
+            options: vec![original.clone()],
         });
         insert_stage(&state, "session", &"0".repeat(64));
 
-        let error = reconcile_runtime_schema(
+        let mut changed = original;
+        changed.capability.max = Some(300.0);
+
+        let (editable, changed_keys) = reconcile_runtime_schema(
             &state,
             RuntimeSchema {
                 ghostty_version: Some("1.3.2".to_string()),
                 schema_hash: "new-schema".to_string(),
                 diagnostics: Vec::new(),
-                options: Vec::new(),
+                options: vec![changed],
             },
         )
-        .unwrap_err();
+        .unwrap();
 
-        assert_eq!(error.code, "ghostty_contract_changed");
+        assert!(editable.contains("font-size"));
+        assert!(changed_keys.contains("font-size"));
+        assert_eq!(
+            require_unchanged_review_contract(
+                &[DraftChange {
+                    key: "font-size".to_string(),
+                    before: vec!["14".to_string()],
+                    after: vec!["15".to_string()],
+                }],
+                &changed_keys,
+            )
+            .unwrap_err()
+            .code,
+            "ghostty_contract_changed"
+        );
         assert!(state.stages.lock().unwrap().is_empty());
         assert_eq!(
             state
@@ -1893,6 +2258,39 @@ mod tests {
                 .schema_hash,
             "new-schema"
         );
+    }
+
+    #[test]
+    fn unrelated_schema_changes_keep_existing_reviews() {
+        let state = AppState::default();
+        let option = test_runtime_option("font-size");
+        let background = test_runtime_option("background-opacity");
+        *state.runtime_schema.lock().unwrap() = Some(RuntimeSchema {
+            ghostty_version: Some("1.3.1".to_string()),
+            schema_hash: "old-schema".to_string(),
+            diagnostics: Vec::new(),
+            options: vec![option.clone(), background.clone()],
+        });
+        insert_stage(&state, "session", &"0".repeat(64));
+
+        let mut changed_background = background;
+        changed_background.capability.max = Some(0.9);
+
+        let (keys, changed_keys) = reconcile_runtime_schema(
+            &state,
+            RuntimeSchema {
+                ghostty_version: Some("1.3.2".to_string()),
+                schema_hash: "new-schema".to_string(),
+                diagnostics: vec!["new reference setting".to_string()],
+                options: vec![option, changed_background],
+            },
+        )
+        .unwrap();
+
+        assert!(keys.contains("font-size"));
+        assert!(changed_keys.contains("background-opacity"));
+        assert!(!changed_keys.contains("font-size"));
+        assert_eq!(state.stages.lock().unwrap().len(), 1);
     }
 
     #[test]
@@ -1908,7 +2306,7 @@ mod tests {
                     description: String::new(),
                     default_values: vec!["13".to_string()],
                     current_values: vec!["13".to_string()],
-                    category: "字体".to_string(),
+                    category: "font".to_string(),
                     kind: "number".to_string(),
                     choices: Vec::new(),
                     repeatable: false,
@@ -1916,6 +2314,7 @@ mod tests {
                     since: None,
                     risk: "normal".to_string(),
                     editable: true,
+                    capability: test_capability("control", None, Some(1.0), Some(255.0)),
                 },
                 models::RuntimeOption {
                     key: "command".to_string(),
@@ -1930,13 +2329,14 @@ mod tests {
                     since: None,
                     risk: "sensitive".to_string(),
                     editable: false,
+                    capability: test_capability("none", Some("protected"), None, None),
                 },
                 models::RuntimeOption {
                     key: "font-family".to_string(),
                     description: String::new(),
                     default_values: Vec::new(),
                     current_values: Vec::new(),
-                    category: "字体".to_string(),
+                    category: "font".to_string(),
                     kind: "text".to_string(),
                     choices: Vec::new(),
                     repeatable: true,
@@ -1944,6 +2344,7 @@ mod tests {
                     since: None,
                     risk: "normal".to_string(),
                     editable: false,
+                    capability: test_capability("none", Some("needs-list-editor"), None, None),
                 },
             ],
         });
@@ -1952,6 +2353,111 @@ mod tests {
         assert!(allowed.contains("font-size"));
         assert!(!allowed.contains("command"));
         assert!(!allowed.contains("font-family"));
+    }
+
+    #[test]
+    fn session_metadata_never_exposes_unrecognized_names_or_values() {
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("config");
+        fs::write(
+            &target,
+            b"font-size = 14\n/Users/private/token = should-not-cross-ipc\n",
+        )
+        .unwrap();
+
+        let state = AppState::default();
+        *state.runtime_schema.lock().unwrap() = Some(RuntimeSchema {
+            ghostty_version: Some("test".to_string()),
+            schema_hash: "test".to_string(),
+            diagnostics: Vec::new(),
+            options: vec![test_runtime_option("font-size")],
+        });
+        state.candidates.lock().unwrap().insert(
+            "candidate".to_string(),
+            ConfigCandidate {
+                id: "candidate".to_string(),
+                label: "Config".to_string(),
+                path: target.to_string_lossy().into_owned(),
+                source: "test".to_string(),
+                format: "legacy".to_string(),
+                priority: 0,
+                exists: true,
+                writable: true,
+                symlink: false,
+                size_bytes: fs::metadata(&target).ok().map(|metadata| metadata.len()),
+            },
+        );
+
+        let session = open_config_session("candidate", &state).unwrap();
+        assert_eq!(session.unrecognized_setting_count, 1);
+        assert_eq!(session.configured_settings.len(), 1);
+        assert_eq!(session.configured_settings[0].key, "font-size");
+        let serialized = serde_json::to_string(&session).unwrap();
+        assert!(!serialized.contains("/Users/private/token"));
+        assert!(!serialized.contains("should-not-cross-ipc"));
+    }
+
+    #[test]
+    fn scalar_contract_rejects_invalid_types_and_ranges_before_ghostty_runs() {
+        let number = test_runtime_option("font-size");
+        assert!(validate_setting_value(&number, "14.5").is_ok());
+        assert_eq!(
+            validate_setting_value(&number, "NaN").unwrap_err().code,
+            "invalid_setting_value"
+        );
+        assert_eq!(
+            validate_setting_value(&number, "300").unwrap_err().code,
+            "value_out_of_range"
+        );
+
+        let mut boolean = test_runtime_option("mouse-hide-while-typing");
+        boolean.kind = "boolean".to_string();
+        boolean.capability.min = None;
+        boolean.capability.max = None;
+        assert!(validate_setting_value(&boolean, "true").is_ok());
+        assert_eq!(
+            validate_setting_value(&boolean, "yes").unwrap_err().code,
+            "invalid_setting_value"
+        );
+
+        let mut select = test_runtime_option("cursor-style");
+        select.kind = "select".to_string();
+        select.choices = vec!["block".to_string(), "bar".to_string()];
+        select.capability.min = None;
+        select.capability.max = None;
+        assert!(validate_setting_value(&select, "bar").is_ok());
+        assert_eq!(
+            validate_setting_value(&select, "beam").unwrap_err().code,
+            "invalid_setting_value"
+        );
+    }
+
+    #[test]
+    fn strongest_activation_is_reported_for_a_mixed_draft() {
+        let mut reload = test_runtime_option("font-size");
+        reload.capability.activation = "reload".to_string();
+        let mut next_terminal = test_runtime_option("window-inherit-working-directory");
+        next_terminal.capability.activation = "reload-new-terminal".to_string();
+        let mut restart = test_runtime_option("background-opacity");
+        restart.capability.activation = "restart".to_string();
+        let options = [reload, next_terminal, restart]
+            .into_iter()
+            .map(|option| (option.key.clone(), option))
+            .collect();
+        let changes = vec![
+            DraftChange {
+                key: "font-size".to_string(),
+                before: vec!["13".to_string()],
+                after: vec!["14".to_string()],
+            },
+            DraftChange {
+                key: "background-opacity".to_string(),
+                before: vec!["1".to_string()],
+                after: vec!["0.9".to_string()],
+            },
+        ];
+
+        assert_eq!(activation_for_changes(&changes, &options), "restart");
     }
 
     #[test]
@@ -1966,7 +2472,7 @@ mod tests {
                 description: String::new(),
                 default_values: vec!["13".to_string()],
                 current_values: Vec::new(),
-                category: "字体".to_string(),
+                category: "font".to_string(),
                 kind: "number".to_string(),
                 choices: Vec::new(),
                 repeatable: false,
@@ -1974,6 +2480,7 @@ mod tests {
                 since: None,
                 risk: "normal".to_string(),
                 editable: true,
+                capability: test_capability("control", None, Some(1.0), Some(255.0)),
             }],
         });
         let prepared = |changed_keys: Vec<String>| PreparedSnapshotRestore {
@@ -1992,14 +2499,37 @@ mod tests {
             changed_keys,
         };
 
-        let safe_keys = editable_scalar_keys(&state).unwrap();
+        let options =
+            editable_options_from_schema(state.runtime_schema.lock().unwrap().as_ref().unwrap());
         assert!(enforce_snapshot_restore_policy(
             &prepared(vec!["font-size".to_string()]),
-            &safe_keys
+            &options
         )
         .is_ok());
         assert_eq!(
-            enforce_snapshot_restore_policy(&prepared(vec!["command".to_string()]), &safe_keys)
+            enforce_snapshot_restore_policy(&prepared(vec!["command".to_string()]), &options)
+                .unwrap_err()
+                .code,
+            "snapshot_requires_specialized_restore"
+        );
+
+        let invalid_value = PreparedSnapshotRestore {
+            restored_bytes: b"font-size = 999\n".to_vec(),
+            ..prepared(vec!["font-size".to_string()])
+        };
+        assert_eq!(
+            enforce_snapshot_restore_policy(&invalid_value, &options)
+                .unwrap_err()
+                .code,
+            "snapshot_setting_invalid"
+        );
+
+        let duplicated = PreparedSnapshotRestore {
+            restored_bytes: b"font-size = 13\nfont-size = 14\n".to_vec(),
+            ..prepared(vec!["font-size".to_string()])
+        };
+        assert_eq!(
+            enforce_snapshot_restore_policy(&duplicated, &options)
                 .unwrap_err()
                 .code,
             "snapshot_requires_specialized_restore"
@@ -2029,9 +2559,14 @@ mod tests {
                 session_id: session_id.to_string(),
                 revision: revision.to_string(),
                 bytes: b"font-size = 15\n".to_vec(),
-                changes: Vec::new(),
+                changes: vec![DraftChange {
+                    key: "font-size".to_string(),
+                    before: vec!["14".to_string()],
+                    after: vec!["15".to_string()],
+                }],
                 diagnostics: Vec::new(),
                 valid: true,
+                activation: "reload".to_string(),
             },
         );
     }

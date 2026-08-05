@@ -4,6 +4,7 @@ import {
   chooseStartupCandidate,
   chooseWorkspaceCandidate,
   isCommonSetting,
+  withConfiguredReferences,
 } from "./workspaceModel";
 
 describe("workspace journey model", () => {
@@ -38,5 +39,19 @@ describe("workspace journey model", () => {
     const opacity = demoSchema.options.find((option) => option.key === "background-opacity")!;
     expect(isCommonSetting(theme)).toBe(false);
     expect(isCommonSetting(opacity)).toBe(true);
+  });
+
+  it("keeps unknown configured keys visible without exposing their values", () => {
+    const options = withConfiguredReferences(demoSchema.options, [{
+      key: "old-plugin-setting",
+      occurrenceCount: 2,
+      valueExposure: "protected",
+    }]);
+    const unknown = options.find((option) => option.key === "old-plugin-setting");
+
+    expect(unknown?.category).toBe("unknown");
+    expect(unknown?.editable).toBe(false);
+    expect(unknown?.currentValues).toEqual([]);
+    expect(unknown?.capability.reason).toBe("unrecognized-setting");
   });
 });

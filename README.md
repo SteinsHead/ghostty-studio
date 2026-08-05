@@ -20,6 +20,9 @@ the file.
 - Finds macOS and XDG config candidates, and asks you to choose only when more than one can be used.
 - Creates a new config safely, after confirmation, when no default config exists.
 - Lets you search and edit supported settings, with a contextual preview for visual changes.
+- Follows your system language by default, with instant Simplified Chinese and English switching.
+- Keeps the main journey focused on settings you can change, while the full Ghostty catalog remains
+  available as a clear, searchable reference.
 - Keeps every edit in a draft until you review the exact diff and choose to save.
 - Preserves comments, ordering, unknown keys, blank lines, BOM, CRLF, and trailing-newline style.
 - Validates with Ghostty and creates a local snapshot before every save.
@@ -29,7 +32,7 @@ shell and file access in the webview.
 
 ## Download
 
-[Download Ghostty Studio v0.2.0](https://github.com/SteinsHead/ghostty-studio/releases/tag/v0.2.0)
+[Download Ghostty Studio v0.3.0](https://github.com/SteinsHead/ghostty-studio/releases/tag/v0.3.0)
 for Apple Silicon Macs running macOS 11 or later.
 
 This is an early preview. The app is ad-hoc signed but not Apple-notarized, so macOS may ask you to
@@ -41,14 +44,14 @@ from source if you prefer.
 Ghostty Studio is an early preview. The source is ready to explore, but a few limits are intentional:
 
 - The desktop app currently targets macOS and the writable contract is tested against Ghostty 1.3.1.
-- A small, reviewed set of visual settings is editable; the rest of the catalog remains discoverable
-  and read-only until it has a purpose-built editor.
+- Ghostty 1.3.1 on macOS currently has 29 reviewed settings you can change. The rest remain
+  searchable and explain why they need a different editing experience.
 - The terminal preview is a safe DOM simulation, and the source graph does not yet calculate every
   final effective value across includes, resets, and repeatable settings.
 - The extension manifest format and validator are developer-facing contracts for now. There is no
   extension browser, installer, or execution surface in the app.
 - The preview download is ad-hoc signed, not Developer ID signed or notarized.
-- The interface is currently available in Simplified Chinese; an English interface is planned.
+- The interface is available in Simplified Chinese and English.
 
 ## Run locally
 
@@ -96,6 +99,7 @@ The deeper design and security details live in the documentation:
 
 - [Architecture](docs/ARCHITECTURE.md)
 - [Product experience and platform boundaries](docs/PRODUCT_EXPERIENCE.md)
+- [Product design principles](docs/product-design.md)
 - [Threat model](docs/THREAT_MODEL.md)
 - [Extension design](docs/EXTENSIONS.md)
 - [Roadmap](docs/ROADMAP.md)

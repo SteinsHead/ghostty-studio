@@ -19,6 +19,8 @@ Ghostty Studio 是我为自己做的本地桌面配置器：打开平时使用�
 - 发现 macOS 与 XDG 配置候选；只有多个来源都可用时才请你选择。
 - 尚无默认配置时，经确认安全创建新配置，绝不覆盖已有文件。
 - 搜索并编辑已支持的设置；视觉选项会在相关页面提供上下文预览。
+- 默认跟随系统语言，也可随时在简体中文与英文之间切换。
+- 主流程只呈现真正能调整的设置；完整 Ghostty 目录仍可随时搜索和查阅。
 - 所有调整先留在草稿中，确认准确 diff 后才写入文件。
 - 保留注释、顺序、未知设置、空行、BOM、CRLF 和末尾换行风格。
 - 每次保存前都交给 Ghostty 验证，并自动创建本地快照。
@@ -28,7 +30,7 @@ Ghostty Studio 是我为自己做的本地桌面配置器：打开平时使用�
 
 ## 下载
 
-[下载 Ghostty Studio v0.2.0](https://github.com/SteinsHead/ghostty-studio/releases/tag/v0.2.0)，
+[下载 Ghostty Studio v0.3.0](https://github.com/SteinsHead/ghostty-studio/releases/tag/v0.3.0)，
 适用于 macOS 11 或更高版本的 Apple Silicon Mac。
 
 这是一个早期预览版。应用已做 ad-hoc 签名，但尚未经过 Apple 公证，所以 macOS 首次
@@ -40,11 +42,11 @@ Ghostty Studio 是我为自己做的本地桌面配置器：打开平时使用�
 Ghostty Studio 仍是早期预览版，当前边界很明确：
 
 - 桌面端目前以 macOS 为主，可写设置契约基于 Ghostty 1.3.1 测试。
-- 只有一小组经过确认的视觉设置可以编辑；其他设置仍可搜索和查看，后续会逐步加入合适的编辑器。
+- Ghostty 1.3.1 在 macOS 上已有 29 项经过验证的设置可以调整；其余设置仍可搜索，并会说明为什么需要不同的编辑方式。
 - 终端画面是安全的 DOM 模拟器；来源图尚未计算 include、reset 与重复设置下的全部最终生效值。
 - 扩展 manifest 格式和校验器目前只面向开发者；应用内没有扩展浏览、安装或执行界面。
 - 预览安装包采用 ad-hoc 签名，尚未经过 Developer ID 签名和 Apple 公证。
-- 界面目前为简体中文，英文界面在计划中。
+- 界面支持简体中文与英文。
 
 ## 本地运行
 
@@ -91,6 +93,7 @@ Ghostty Studio 不会重新生成整份配置，而是在原文档上只修改�
 
 - [架构](docs/ARCHITECTURE.md)
 - [产品体验与平台边界](docs/PRODUCT_EXPERIENCE.md)
+- [产品设计准则](docs/product-design.md)
 - [威胁模型](docs/THREAT_MODEL.md)
 - [扩展设计](docs/EXTENSIONS.md)
 - [路线图](docs/ROADMAP.md)

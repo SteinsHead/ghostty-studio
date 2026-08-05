@@ -35,7 +35,21 @@ pub struct EnvironmentReport {
     pub warnings: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RuntimeCapability {
+    pub edit_mode: String,
+    pub reason: Option<String>,
+    pub activation: String,
+    pub constraint_behavior: String,
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+    pub step: Option<f64>,
+    pub unit: Option<String>,
+    pub platform: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeOption {
     pub key: String,
@@ -50,6 +64,7 @@ pub struct RuntimeOption {
     pub since: Option<String>,
     pub risk: String,
     pub editable: bool,
+    pub capability: RuntimeCapability,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -63,6 +78,14 @@ pub struct RuntimeSchema {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ConfiguredSetting {
+    pub key: String,
+    pub occurrence_count: usize,
+    pub value_exposure: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ConfigSession {
     pub id: String,
     pub candidate_id: String,
@@ -70,6 +93,8 @@ pub struct ConfigSession {
     pub revision: String,
     pub read_only: bool,
     pub values: std::collections::BTreeMap<String, Vec<String>>,
+    pub configured_settings: Vec<ConfiguredSetting>,
+    pub unrecognized_setting_count: usize,
     pub diagnostics: Vec<String>,
 }
 
@@ -90,6 +115,7 @@ pub struct ChangePreview {
     pub unified_diff: String,
     pub diagnostics: Vec<String>,
     pub valid: bool,
+    pub activation: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -99,5 +125,39 @@ pub struct ApplyResult {
     pub snapshot_id: String,
     pub diagnostics: Vec<String>,
     pub warnings: Vec<String>,
+    pub activation: String,
     pub reload_required: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capability_and_configured_setting_use_stable_camel_case_fields() {
+        let capability = RuntimeCapability {
+            edit_mode: "control".to_string(),
+            reason: None,
+            activation: "reload-new-terminal".to_string(),
+            constraint_behavior: "reject".to_string(),
+            min: Some(0.0),
+            max: Some(1.0),
+            step: Some(0.01),
+            unit: Some("percent".to_string()),
+            platform: None,
+        };
+        let serialized = serde_json::to_value(capability).unwrap();
+        assert_eq!(serialized["editMode"], "control");
+        assert_eq!(serialized["constraintBehavior"], "reject");
+        assert_eq!(serialized["activation"], "reload-new-terminal");
+
+        let configured = serde_json::to_value(ConfiguredSetting {
+            key: "font-size".to_string(),
+            occurrence_count: 2,
+            value_exposure: "available".to_string(),
+        })
+        .unwrap();
+        assert_eq!(configured["occurrenceCount"], 2);
+        assert_eq!(configured["valueExposure"], "available");
+    }
 }

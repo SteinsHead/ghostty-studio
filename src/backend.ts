@@ -34,8 +34,8 @@ class TauriBackend implements Backend {
     return invoke("open_config", { candidateId });
   }
 
-  createConfig(candidateId: string): Promise<ConfigSession> {
-    return invoke("create_config", { candidateId });
+  createConfig(candidateId: string, locale: "zh-CN" | "en" = "en"): Promise<ConfigSession> {
+    return invoke("create_config", { candidateId, locale });
   }
 
   stageChanges(
@@ -50,8 +50,9 @@ class TauriBackend implements Backend {
     sessionId: string,
     revision: string,
     token: string,
+    locale: "zh-CN" | "en" = "en",
   ): Promise<ApplyResult> {
-    return invoke("apply_changes", { sessionId, revision, token });
+    return invoke("apply_changes", { sessionId, revision, token, locale });
   }
 
   listSnapshots(sessionId: string): Promise<SnapshotInfo[]> {
@@ -62,8 +63,9 @@ class TauriBackend implements Backend {
     sessionId: string,
     revision: string,
     snapshotId: string,
+    locale: "zh-CN" | "en" = "en",
   ): Promise<ApplyResult> {
-    return invoke("restore_snapshot", { sessionId, revision, snapshotId });
+    return invoke("restore_snapshot", { sessionId, revision, snapshotId, locale });
   }
 }
 
@@ -171,8 +173,16 @@ class BrowserDemoBackend implements Backend {
       revision: "demo-revision",
       readOnly: true,
       values: Object.fromEntries(
-        demoSchema.options.map((option) => [option.key, option.currentValues]),
+        demoSchema.options
+          .filter((option) => option.editable)
+          .map((option) => [option.key, option.currentValues]),
       ),
+      configuredSettings: demoSchema.options.map((option) => ({
+        key: option.key,
+        occurrenceCount: Math.max(1, option.currentValues.length),
+        valueExposure: option.editable ? "available" : "protected",
+      })),
+      unrecognizedSettingCount: 0,
       diagnostics: ["浏览器预览模式固定为只读。请运行 Tauri 应用以访问本地文件。"],
     };
   }
@@ -186,6 +196,18 @@ class BrowserDemoBackend implements Backend {
     revision: string,
     changes: DraftChange[],
   ): Promise<ChangePreview> {
+    const activationRank = {
+      unknown: 0,
+      reload: 1,
+      "reload-new-terminal": 2,
+      restart: 3,
+    } as const;
+    const activation = changes
+      .map((change) => demoSchema.options.find((option) => option.key === change.key)?.capability.activation ?? "unknown")
+      .reduce<ChangePreview["activation"]>(
+        (current, next) => activationRank[next] > activationRank[current] ? next : current,
+        "unknown",
+      );
     const unifiedDiff = changes
       .flatMap((change) => [
         `-${change.key} = ${change.before.join(", ")}`,
@@ -197,8 +219,9 @@ class BrowserDemoBackend implements Backend {
       revision,
       changes,
       unifiedDiff,
-      diagnostics: ["这是演示结果，不会写入文件。"],
+      diagnostics: [],
       valid: true,
+      activation,
     };
   }
 
