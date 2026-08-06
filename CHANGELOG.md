@@ -2,6 +2,51 @@
 
 Ghostty Studio follows semantic versioning while the project is in preview.
 
+## Unreleased
+
+## 0.4.0 — 2026-08-06
+
+### Added
+
+- Add a private local PNG/JPEG background library with multi-select import, content deduplication,
+  manual or random switching, removal, and live preview.
+- Add dedicated controls for image visibility, fit, nine-point position, and tiling.
+- Add effective-source detection for Ghostty 1.3.1 roots and its mutable global include queue,
+  including the reset cursor edge case and writable include destinations. Other versions fail closed
+  until their source-order behavior is audited.
+- Add separate current-source, prospective-write, and final-value states; overridden drafts can move
+  to the winning source without being saved.
+- Show when a library image is still used by another Ghostty configuration layer and provide a
+  direct path to the relevant write-location details before removal is attempted.
+
+### Changed
+
+- Select the first successfully imported image as the active draft immediately, so both the canvas
+  and terminal preview update even when the previous value came from an external path.
+- Keep image cards and feedback stable while removal is pending or refused, with one removal request
+  per asset at a time.
+- Replace the original ghost-and-prompt mark with an independent open-shroud ghost symbol that stays
+  clear at desktop, sidebar, installer, and favicon sizes.
+- Tighten bilingual interface copy around the current state and next action, and move Ghostty's
+  longer source descriptions behind an optional detail disclosure.
+
+### Safety
+
+- Normalize imported images with decode, size, pixel, EXIF orientation, and memory checks; strip
+  metadata and keep original and managed paths out of WebView IPC, reviews, and diffs.
+- Load bounded thumbnails in pages, rebuild missing previews on demand, repair managed artifacts on
+  reimport, and fail closed if a future Ghostty release changes any background-image contract.
+- Validate the complete default configuration and compare every written scalar against Ghostty's
+  final `+show-config` output; rollback on mismatch or source changes.
+- Treat “turn off background image” as Ghostty's explicit empty-value reset, rather than removing a
+  layer and accidentally revealing an older image.
+- Rebuild the live include graph before and after deleting a managed image, refusing deletion when
+  usage cannot be proven absent.
+- Resolve quoted, relative, canonical, and symlinked image paths against the configuration file that
+  declared them, so every preview and removal check uses the same image identity.
+- Leave staged reviews and managed assets untouched when removal is cancelled, rejected, or races
+  with a configuration change.
+
 ## 0.3.0 — 2026-08-05
 
 ### Added

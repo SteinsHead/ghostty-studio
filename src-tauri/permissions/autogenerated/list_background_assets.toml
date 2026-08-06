@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-list-background-assets"
+description = "Enables the list_background_assets command without any pre-configured scope."
+commands.allow = ["list_background_assets"]
+
+[[permission]]
+identifier = "deny-list-background-assets"
+description = "Denies the list_background_assets command without any pre-configured scope."
+commands.deny = ["list_background_assets"]

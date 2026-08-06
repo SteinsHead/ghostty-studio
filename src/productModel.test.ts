@@ -21,6 +21,11 @@ const session: ConfigSession = {
   configuredSettings: [],
   unrecognizedSettingCount: 0,
   diagnostics: [],
+  backgroundImage: { kind: "none", assetId: null },
+  effectiveValuesKnown: true,
+  effectiveValues: {},
+  effectiveBackgroundImage: { kind: "none", assetId: null },
+  settingEffects: {},
 };
 
 function memoryStorage(initial: string | null = null) {
@@ -55,6 +60,7 @@ describe("workspace product model", () => {
       { ...demoSchema, diagnostics: [] },
       session,
       {
+        graphRevision: "test",
         complete: true,
         semanticsKnown: true,
         nodes: [],

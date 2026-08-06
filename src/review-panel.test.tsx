@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { RESET_BACKGROUND_TOKEN } from "./backgroundImageModel";
 import { ReviewPanel } from "./components/ReviewPanel";
 import type { ChangePreview } from "./types";
 
@@ -19,6 +20,12 @@ const preview: ChangePreview = {
     { key: "foreground", before: ["cdd6f4"], after: ["89b4fa"] },
     { key: "font-family", before: ["JetBrains Mono"], after: [] },
   ],
+  effect: {
+    status: "effective",
+    affectedKeys: [],
+    suggestedCandidateId: null,
+    suggestedLabel: null,
+  },
 };
 
 describe("save review copy", () => {
@@ -92,6 +99,34 @@ describe("save review copy", () => {
     expect(rawDiff?.querySelector("pre")?.textContent).toBe(preview.unifiedDiff);
   });
 
+  it("describes an explicit background reset as turning the image off", () => {
+    const resetPreview: ChangePreview = {
+      ...preview,
+      changes: [{
+        key: "background-image",
+        before: [`managed-image:${"a".repeat(64)}`],
+        after: [RESET_BACKGROUND_TOKEN],
+      }],
+    };
+
+    act(() => root.render(
+      <ReviewPanel
+        changes={[]}
+        preview={resetPreview}
+        loading={false}
+        readOnly={false}
+        backgroundAssetNames={{ ["a".repeat(64)]: "night sky.png" }}
+        onClose={() => undefined}
+        onApply={() => undefined}
+      />,
+    ));
+
+    const row = container.querySelector<HTMLElement>(".review-change");
+    expect(row?.textContent).toContain("night sky.png");
+    expect(row?.textContent).toContain("关闭背景图片");
+    expect(row?.textContent).not.toContain(RESET_BACKGROUND_TOKEN);
+  });
+
   it("presents browser preview as a review, not a disabled save flow", () => {
     act(() => root.render(
       <ReviewPanel
@@ -110,5 +145,113 @@ describe("save review copy", () => {
     expect(container.textContent).toContain("返回编辑");
     expect(container.textContent).not.toContain("当前配置为只读");
     expect(container.querySelector<HTMLButtonElement>(".review-footer .button--primary")).toBeNull();
+  });
+
+  it("blocks an overridden destination and lets the user move the draft to the effective source", () => {
+    const onApply = vi.fn();
+    const onUseSuggestedSource = vi.fn();
+    const overriddenPreview: ChangePreview = {
+      ...preview,
+      changes: preview.changes.filter((change) => change.after.length > 0),
+      effect: {
+        status: "overridden",
+        affectedKeys: ["background-image", "background-image-opacity"],
+        suggestedCandidateId: "include-background",
+        suggestedLabel: "background.conf",
+      },
+    };
+
+    act(() => root.render(
+      <ReviewPanel
+        changes={overriddenPreview.changes}
+        preview={overriddenPreview}
+        loading={false}
+        readOnly={false}
+        onClose={() => undefined}
+        onApply={onApply}
+        onUseSuggestedSource={onUseSuggestedSource}
+      />,
+    ));
+
+    expect(container.textContent).toContain("当前保存位置会被后续配置覆盖");
+    expect(container.textContent).toContain("2 项修改不会进入 Ghostty 的最终配置");
+
+    const footerButtons = [...container.querySelectorAll<HTMLButtonElement>(".review-footer button")];
+    const moveButton = footerButtons.find((button) => button.textContent?.includes("改存到 background.conf"));
+    const saveButton = footerButtons.find((button) => button.textContent?.trim() === "保存");
+
+    expect(moveButton).toBeDefined();
+    expect(saveButton?.disabled).toBe(true);
+    act(() => moveButton!.click());
+    expect(onUseSuggestedSource).toHaveBeenCalledOnce();
+    expect(onUseSuggestedSource).toHaveBeenCalledWith("include-background");
+    expect(onApply).not.toHaveBeenCalled();
+  });
+
+  it("does not move a file-bound removal to another source", () => {
+    const onUseSuggestedSource = vi.fn();
+    const overriddenPreview: ChangePreview = {
+      ...preview,
+      changes: [{ key: "font-family", before: ["JetBrains Mono"], after: [] }],
+      effect: {
+        status: "overridden",
+        affectedKeys: ["font-family"],
+        suggestedCandidateId: "include-fonts",
+        suggestedLabel: "fonts.conf",
+      },
+    };
+
+    act(() => root.render(
+      <ReviewPanel
+        changes={overriddenPreview.changes}
+        preview={overriddenPreview}
+        loading={false}
+        readOnly={false}
+        onClose={() => undefined}
+        onApply={() => undefined}
+        onUseSuggestedSource={onUseSuggestedSource}
+      />,
+    ));
+
+    expect(container.textContent).toContain("仅针对当前文件的删除操作");
+    expect(container.textContent).toContain("打开 fonts.conf 后重新修改");
+    expect(container.textContent).not.toContain("改存到 fonts.conf");
+    expect(onUseSuggestedSource).not.toHaveBeenCalled();
+  });
+
+  it("still allows an explicit background reset to move to the effective source", () => {
+    const onUseSuggestedSource = vi.fn();
+    const overriddenPreview: ChangePreview = {
+      ...preview,
+      changes: [{
+        key: "background-image",
+        before: [`managed-image:${"a".repeat(64)}`],
+        after: [RESET_BACKGROUND_TOKEN],
+      }],
+      effect: {
+        status: "overridden",
+        affectedKeys: ["background-image"],
+        suggestedCandidateId: "include-background",
+        suggestedLabel: "background.conf",
+      },
+    };
+
+    act(() => root.render(
+      <ReviewPanel
+        changes={overriddenPreview.changes}
+        preview={overriddenPreview}
+        loading={false}
+        readOnly={false}
+        onClose={() => undefined}
+        onApply={() => undefined}
+        onUseSuggestedSource={onUseSuggestedSource}
+      />,
+    ));
+
+    const moveButton = [...container.querySelectorAll<HTMLButtonElement>(".review-footer button")]
+      .find((button) => button.textContent?.includes("改存到 background.conf"));
+    expect(moveButton).toBeDefined();
+    act(() => moveButton!.click());
+    expect(onUseSuggestedSource).toHaveBeenCalledWith("include-background");
   });
 });

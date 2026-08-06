@@ -3,7 +3,7 @@
 Ghostty Studio includes open-source software maintained by other projects. The application is
 distributed under the MIT License, while its dependencies remain subject to their own licenses.
 
-The direct runtime dependencies used by version 0.3.0 are:
+The direct runtime dependencies used by version 0.4.0 are:
 
 | Component | Version | License |
 | --- | --- | --- |
@@ -11,7 +11,9 @@ The direct runtime dependencies used by version 0.3.0 are:
 | lucide-react | 0.468.0 | ISC |
 | react | 19.2.8 | MIT |
 | react-dom | 19.2.8 | MIT |
+| base64 | 0.22.1 | MIT OR Apache-2.0 |
 | fs2 | 0.4.3 | MIT OR Apache-2.0 |
+| image | 0.25.10 | MIT OR Apache-2.0 |
 | libc | 0.2.189 | MIT OR Apache-2.0 |
 | semver | 1.0.28 | MIT OR Apache-2.0 |
 | serde | 1.0.229 | MIT OR Apache-2.0 |

@@ -97,7 +97,7 @@ export function deriveWorkspaceSummary(
       ...base,
       state: "blocked",
       title: textForLocale(locale, "无法读取当前 Ghostty 的可用设置", "Ghostty settings could not be loaded"),
-      description: textForLocale(locale, "Studio 不会猜测未知设置，编辑已安全暂停。", "Studio does not guess unknown settings, so editing has been paused safely."),
+      description: textForLocale(locale, "无法确认可用设置，编辑已暂停。", "Available settings could not be verified, so editing is paused."),
     };
   }
   if (existingConfigCount === 0 || !session) {

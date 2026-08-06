@@ -59,7 +59,7 @@ describe("localized setting copy", () => {
     const copy = copyForSetting("en", "background", longOfficial);
 
     expect(copy.detail).not.toBeNull();
-    expect(copy.detail!.length).toBeLessThanOrEqual(360);
+    expect(copy.detail!.length).toBeLessThanOrEqual(180);
     expect(copy.detail).toContain("official sentence");
   });
 });

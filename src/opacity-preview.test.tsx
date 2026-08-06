@@ -69,7 +69,6 @@ function SliderHarness({ onInput }: { onInput(value: string): void }) {
         value={value}
         baselineValue="1"
         configuredInEditingLayer={false}
-        effectiveValueKnown={false}
         sourceLabel="测试配置层"
         onValueChange={(_key, nextValue) => {
           onInput(nextValue);
@@ -218,7 +217,6 @@ describe("opacity preview stability", () => {
         value="0.9"
         baselineValue="0.9"
         configuredInEditingLayer
-        effectiveValueKnown={false}
         sourceLabel="测试配置层"
         onValueChange={onValueChange}
         onReset={() => undefined}

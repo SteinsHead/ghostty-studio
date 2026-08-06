@@ -51,13 +51,19 @@ export interface ConfigCandidate {
   id: string;
   label: string;
   path: string;
-  source: "xdg" | "macos" | "custom";
+  source: "xdg" | "macos" | "include" | "custom";
   format: "legacy" | "ghostty";
   priority: number;
   exists: boolean;
   writable: boolean;
   symlink: boolean;
   sizeBytes: number | null;
+}
+
+export interface SettingEffect {
+  status: "effective" | "overridden" | "inherited" | "unverified";
+  sourceCandidateId: string | null;
+  sourceLabel: string | null;
 }
 
 export interface EnvironmentReport {
@@ -101,6 +107,60 @@ export interface ConfigSession {
   configuredSettings: ConfiguredSetting[];
   unrecognizedSettingCount: number;
   diagnostics: string[];
+  backgroundImage: BackgroundImageState;
+  effectiveValuesKnown: boolean;
+  effectiveValues: Record<string, string[]>;
+  effectiveBackgroundImage: BackgroundImageState;
+  settingEffects: Record<string, SettingEffect>;
+}
+
+export interface BackgroundImageState {
+  kind: "none" | "managed" | "external";
+  assetId: string | null;
+}
+
+export interface BackgroundAssetSummary {
+  id: string;
+  displayName: string;
+  mediaType: "image/png" | "image/jpeg";
+  width: number;
+  height: number;
+  sizeBytes: number;
+  importedAtMs: number;
+  largeImageWarning: boolean;
+  usage: BackgroundAssetUsage;
+}
+
+export interface BackgroundAssetReference {
+  candidateId: string | null;
+  sourceLabel: string | null;
+  writable: boolean;
+}
+
+export interface BackgroundAssetUsage {
+  status: "available" | "referenced" | "unknown";
+  references: BackgroundAssetReference[];
+}
+
+export interface BackgroundPreviewState {
+  status: "idle" | "loading" | "ready" | "error";
+  dataUrl: string | null;
+}
+
+export interface BackgroundAssetPreview {
+  assetId: string;
+  dataUrl: string;
+}
+
+export interface BackgroundAssetImportFailure {
+  displayName: string;
+  code: string;
+}
+
+export interface BackgroundAssetImportResult {
+  canceled: boolean;
+  assets: BackgroundAssetSummary[];
+  rejected: BackgroundAssetImportFailure[];
 }
 
 export interface ConfiguredSetting {
@@ -143,6 +203,7 @@ export interface GraphDiagnostic {
 }
 
 export interface ConfigGraph {
+  graphRevision: string;
   complete: boolean;
   semanticsKnown: boolean;
   nodes: ConfigNode[];
@@ -166,6 +227,14 @@ export interface ChangePreview {
   diagnostics: string[];
   valid: boolean;
   activation: SettingActivation;
+  effect: ChangeEffectPreview;
+}
+
+export interface ChangeEffectPreview {
+  status: "effective" | "overridden" | "unverified";
+  affectedKeys: string[];
+  suggestedCandidateId: string | null;
+  suggestedLabel: string | null;
 }
 
 export interface ApplyResult {
@@ -175,6 +244,7 @@ export interface ApplyResult {
   warnings: string[];
   reloadRequired: boolean;
   activation: SettingActivation;
+  effectiveStatus: "verified" | "resolved" | "unverified";
 }
 
 export interface SnapshotInfo {
@@ -220,4 +290,8 @@ export interface Backend {
     snapshotId: string,
     locale?: "zh-CN" | "en",
   ): Promise<ApplyResult>;
+  listBackgroundAssets(): Promise<BackgroundAssetSummary[]>;
+  chooseBackgroundImages(): Promise<BackgroundAssetImportResult>;
+  getBackgroundAssetPreview(assetId: string): Promise<BackgroundAssetPreview>;
+  deleteBackgroundAsset(assetId: string, locale?: "zh-CN" | "en"): Promise<void>;
 }

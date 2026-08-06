@@ -8,7 +8,6 @@ import { localizedSettingChoice } from "../settingChoices";
 interface ReferenceSettingRowProps {
   option: RuntimeOption;
   configured?: ConfiguredSetting;
-  effectiveValueKnown: boolean;
   readOnly?: boolean;
   onAdjust?(option: RuntimeOption): void;
 }
@@ -42,9 +41,9 @@ function restrictionLabel(locale: AppLocale, option: RuntimeOption): string {
         ? (chinese ? `仅适用于 ${option.platform}` : `${option.platform} only`)
         : (chinese ? "不适用于当前系统" : "Unavailable on this system");
     case "version-not-supported":
-      return chinese ? "等待版本适配" : "Version support pending";
+      return chinese ? "当前版本只读" : "Read only in this version";
     case "setting-changed":
-      return chinese ? "更新后待确认" : "Review after update";
+      return chinese ? "设置已变化" : "Changed in update";
     case "unrecognized-setting":
       return chinese ? "需要检查" : "Needs review";
     default:
@@ -57,47 +56,47 @@ function restrictionDescription(locale: AppLocale, option: RuntimeOption): strin
   switch (option.capability.reason) {
     case "needs-list-editor":
       return chinese
-        ? "这个设置可以包含多项，并且顺序会影响结果。Studio 会保留现有内容。"
-        : "This setting can contain an ordered list. Studio will preserve the existing entries.";
+        ? "包含多个有序值，请在配置文件中编辑。"
+        : "This is an ordered list. Edit it in the config file.";
     case "needs-theme-picker":
       return chinese
-        ? "主题可以分别指定浅色与深色版本。专用主题选择器完成前，请在配置文件中调整。"
-        : "Themes can define separate light and dark variants. Edit this in the config file until the theme picker is ready.";
+        ? "可分别设置浅色与深色主题，请在配置文件中编辑。"
+        : "Light and dark themes can be set separately. Edit them in the config file.";
     case "protected":
       return chinese
-        ? "它可能包含命令、路径或隐私信息，因此不会在普通控件中显示或改写。"
-        : "This setting may contain commands, paths, or private data, so Studio will not expose or rewrite it here.";
+        ? "可能包含命令、路径或隐私信息，请在配置文件中编辑。"
+        : "This may contain commands, paths, or private data. Edit it in the config file.";
     case "advanced-setting":
+    case "needs-editor":
       return chinese
-        ? "它需要专门的编辑方式。Studio 会保留现有内容。"
-        : "This setting needs a dedicated editor. Studio will preserve the existing value.";
+        ? "需要专用编辑器，暂不支持。"
+        : "A dedicated editor is required and not yet available.";
     case "platform-unavailable":
       return option.platform
         ? (chinese ? `这个设置仅适用于 ${option.platform}。` : `This setting is available only on ${option.platform}.`)
         : (chinese ? "这个设置不适用于当前系统。" : "This setting is not available on this system.");
     case "version-not-supported":
       return chinese
-        ? "当前 Ghostty 版本尚未支持在 Studio 中安全调整这个设置。"
-        : "This Ghostty version is not yet supported for safe editing in Studio.";
+        ? "当前版本暂不支持编辑。"
+        : "Editing is unavailable for this version.";
     case "setting-changed":
       return chinese
-        ? "Ghostty 最近改变了这个设置。确认新行为后，Studio 会重新开放编辑。"
-        : "Ghostty recently changed this setting. Editing will return after its new behavior is verified.";
+        ? "该设置已在 Ghostty 更新中发生变化，暂不可编辑。"
+        : "This setting changed in a Ghostty update and is temporarily read-only.";
     case "unrecognized-setting":
       return chinese
         ? "Ghostty 当前不认识这个配置名。它可能来自旧版本、扩展，也可能存在拼写错误。"
         : "Ghostty does not recognize this key. It may come from an older version, an extension, or a typo.";
     default:
       return chinese
-        ? "这个设置需要更合适的编辑方式，目前请在配置文件中调整。"
-        : "This setting needs a more suitable editor. For now, edit it in the config file.";
+        ? "请在配置文件中编辑。"
+        : "Edit this in the config file.";
   }
 }
 
 export function ReferenceSettingRow({
   option,
   configured,
-  effectiveValueKnown,
   readOnly = false,
   onAdjust,
 }: ReferenceSettingRowProps) {
@@ -157,7 +156,7 @@ export function ReferenceSettingRow({
             <small>
               {protectedValue
                 ? text("内容已隐藏", "Value hidden")
-                : text("Studio 会保留原值", "Studio will preserve the value")}
+                : text("原值已保留", "Original value preserved")}
             </small>
           )}
         </div>
@@ -178,18 +177,23 @@ export function ReferenceSettingRow({
           <ChevronRight size={13} /> {text("详情", "Details")}
         </summary>
         <div>
-          {detail && <p>{detail}</p>}
+          {detail && (
+            <details className="setting-official-detail">
+              <summary>{text("Ghostty 原文", "Ghostty documentation")}</summary>
+              <p>{detail}</p>
+            </details>
+          )}
           {!editable && (
             <p>
               {duplicated
                 ? text(
-                    `这个配置名在文件中出现了 ${configured?.occurrenceCount} 次。为避免修改错误的位置，Studio 会保留现有内容。`,
-                    `This key appears ${configured?.occurrenceCount} times in the file. Studio will preserve every entry to avoid changing the wrong one.`,
+                    "请在配置文件中合并或编辑这些值。",
+                    "Merge or edit these values in the configuration file.",
                   )
                 : blockedByWorkspace
                   ? text(
-                      "切换到可写的配置位置后，即可在 Studio 中调整。",
-                      "Switch to a writable configuration file to adjust this setting in Studio.",
+                      "选择可写配置后即可调整。",
+                      "Choose a writable configuration to edit this setting.",
                     )
                   : restrictionDescription(locale, option)}
             </p>
@@ -197,11 +201,8 @@ export function ReferenceSettingRow({
           {activation && (
             <p>{text(`更改会在${activation}生效。`, `Changes take effect ${activation}.`)}</p>
           )}
-          {option.platform && (
+          {option.platform && option.capability.reason !== "platform-unavailable" && (
             <p>{text(`适用于 ${option.platform}。`, `Available on ${option.platform}.`)}</p>
-          )}
-          {!effectiveValueKnown && configured && (
-            <p>{text("其他配置文件可能覆盖这里的设置。", "Another configuration file may override this setting.")}</p>
           )}
         </div>
       </details>

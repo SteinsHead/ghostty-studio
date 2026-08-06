@@ -50,6 +50,9 @@ function sourceDescription(locale: AppLocale, candidate: ConfigCandidate): strin
   if (candidate.source === "xdg") {
     return chinese ? "XDG 配置，常用于 dotfiles" : "XDG configuration, commonly used with dotfiles";
   }
+  if (candidate.source === "include") {
+    return chinese ? "由 config-file 加载的配置" : "Configuration loaded by config-file";
+  }
   return chinese ? "自定义配置" : "Custom configuration";
 }
 
@@ -124,11 +127,11 @@ export function ConfigSourcePanel({
       >
         <header className="review-header">
           <div>
-            <h2 id="source-panel-title">{text("选择配置", "Choose configuration")}</h2>
+            <h2 id="source-panel-title">{text("选择写入位置", "Choose write location")}</h2>
             <p>
               {text(
-                "Ghostty Studio 只会修改你在这里选择的文件。",
-                "Ghostty Studio will change only the file you choose here.",
+                "Ghostty 可能同时加载多份配置。",
+                "Ghostty may load more than one configuration.",
               )}
             </p>
           </div>
@@ -144,15 +147,6 @@ export function ConfigSourcePanel({
         </header>
 
         <div className="review-body" tabIndex={0} aria-label={text("配置文件列表", "Configuration files")}>
-          {hasExistingConfig && (environment?.candidates.filter((candidate) => candidate.exists).length ?? 0) > 1 && (
-            <p className="source-intro">
-              {text(
-                "发现了多个配置文件。请选择你常用的一份，之后仍可随时切换。",
-                "More than one configuration file was found. Choose the one you normally use; you can switch later.",
-              )}
-            </p>
-          )}
-
           {error && <div className="history-message history-message--error" role="alert"><AlertTriangle size={16} /><span>{error}</span></div>}
 
           <div className="candidate-list">
@@ -174,7 +168,7 @@ export function ConfigSourcePanel({
                     <span className="candidate-copy">
                       <span className="candidate-title">
                         <strong>{candidate.label}</strong>
-                        {active && <em><Check size={11} /> {text("当前", "Current")}</em>}
+                        {active && <em><Check size={11} /> {text("保存到这里", "Save destination")}</em>}
                       </span>
                       <small>{sourceDescription(locale, candidate)}</small>
                       <code title={candidate.path}>{candidate.path}</code>
@@ -211,17 +205,12 @@ export function ConfigSourcePanel({
                                 )
                               : text("创建新的空白配置？", "Create a new blank configuration?")}
                         </strong>
-                        <span>
-                          {candidate.exists
-                            ? text(
-                                "草稿只属于当前配置文件，不会自动带到另一份配置。",
-                                "Drafts belong to the current file and do not move to another configuration.",
-                              )
-                            : text(
-                                "Studio 会先让本机 Ghostty 检查空白配置，再请求系统确认。如果文件已存在，创建会停止且不会覆盖。",
-                                "Your installed Ghostty will check the blank configuration before the system asks for confirmation. Creation stops if the file already exists and never overwrites it.",
-                              )}
-                        </span>
+                        {!candidate.exists && (
+                          <span>{text(
+                            "创建前会由 Ghostty 检查；不会覆盖已有文件。",
+                            "Ghostty will validate the file before creation. Existing files will not be overwritten.",
+                          )}</span>
+                        )}
                         <div className="candidate-confirm__actions">
                           <button type="button" className="button button--secondary" disabled={switching} onClick={() => setPendingCandidate(null)}>
                             {text("取消", "Cancel")}
@@ -255,8 +244,8 @@ export function ConfigSourcePanel({
               <strong>{text("没有找到配置文件", "No configuration files found")}</strong>
               <span>
                 {text(
-                  "重新检查后再试。Studio 不会猜测文件路径。",
-                  "Check again to retry. Studio will not guess a file path.",
+                  "重新检查后再试。",
+                  "Check again to retry.",
                 )}
               </span>
             </div>
@@ -266,15 +255,15 @@ export function ConfigSourcePanel({
             <summary><GitMerge size={13} /> {text("关于配置来源", "About configuration sources")}</summary>
             <p>
               {text(
-                "Ghostty 可以从多个位置加载设置。这里决定 Studio 写入哪一份；其他文件仍可能覆盖它。",
-                "Ghostty can load settings from several places. This choice controls where Studio saves; another file may still override it.",
+                "写入位置不一定是最终生效来源；保存前会检查覆盖关系。",
+                "The write location may not be the effective source. Overrides are checked before saving.",
               )}
             </p>
             {(environment?.candidates ?? []).some((candidate) => !candidate.exists) && (
               <p>
                 {text(
-                  "只有尚无默认配置，并且目标位于用户目录时，Studio 才会创建新文件。",
-                  "Studio can create a file only when no default configuration exists and the destination is inside your user folder.",
+                  "仅在用户目录内且没有默认配置时创建新文件。",
+                  "New files are created only in your user folder when no default configuration exists.",
                 )}
               </p>
             )}
@@ -283,9 +272,6 @@ export function ConfigSourcePanel({
         </div>
 
         <footer className="review-footer">
-          <span className="readonly-note">
-            {text("切换配置不会自动保存任何设置。", "Switching configurations never saves settings automatically.")}
-          </span>
           <button type="button" className="button button--secondary" disabled={switching} onClick={onClose}>
             {text("完成", "Done")}
           </button>

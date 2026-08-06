@@ -80,7 +80,6 @@ export function ConfigGraphPanel({ graph, onClose }: ConfigGraphPanelProps) {
       >
         <header className="review-header">
           <div>
-            <span className="eyebrow"><Layers3 size={14} /> {text("加载关系", "Loading relationships")}</span>
             <h2 id="graph-title">{text("配置来源", "Configuration sources")}</h2>
           </div>
           <button
@@ -102,15 +101,14 @@ export function ConfigGraphPanel({ graph, onClose }: ConfigGraphPanelProps) {
                 <div><strong>{numberFormatter.format(graph.nodes.length)}</strong><span>{text("配置文件", graph.nodes.length === 1 ? "File" : "Files")}</span></div>
                 <div><strong>{numberFormatter.format(graph.edges.length)}</strong><span>{text("引用关系", graph.edges.length === 1 ? "Include" : "Includes")}</span></div>
                 <div><strong>{numberFormatter.format(overridden.length)}</strong><span>{text("多文件设置", overridden.length === 1 ? "Repeated setting" : "Repeated settings")}</span></div>
-                <div><strong>{numberFormatter.format(Math.ceil(graph.totalBytes / 1024))} KB</strong><span>{text("配置大小", "Total size")}</span></div>
               </div>
 
               <div className="graph-note">
                 <LockKeyhole size={15} />
                 <span>
                   {text(
-                    "为保护隐私，这里只显示配置名、层级和行号，不显示路径或配置值。",
-                    "To protect your privacy, this view shows keys, layers, and line numbers—not paths or values.",
+                    "路径和配置值已隐藏。",
+                    "Paths and configuration values are hidden.",
                   )}
                 </span>
               </div>
@@ -127,8 +125,8 @@ export function ConfigGraphPanel({ graph, onClose }: ConfigGraphPanelProps) {
                   <AlertTriangle size={15} />
                   <span>
                     {text(
-                      "这里显示加载顺序和设置来源，但尚不能确定多文件配置的最终生效值。",
-                      "This view shows loading order and setting sources, but it cannot yet determine the final values across multiple files.",
+                      "暂时无法确定多文件配置的最终值。",
+                      "Effective values across files are not available yet.",
                     )}
                   </span>
                 </div>
@@ -230,12 +228,6 @@ export function ConfigGraphPanel({ graph, onClose }: ConfigGraphPanelProps) {
         </div>
 
         <footer className="review-footer">
-          <span className="readonly-note">
-            {text(
-              "Studio 不会自动读取 Ghostty 配置目录之外的文件。",
-              "Studio does not automatically read files outside Ghostty's configuration folders.",
-            )}
-          </span>
           <button type="button" className="button button--secondary" onClick={onClose}>
             {text("完成", "Done")}
           </button>

@@ -22,6 +22,7 @@ const MAX_GRAPH_DIAGNOSTICS: usize = 512;
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigGraph {
+    pub graph_revision: String,
     pub complete: bool,
     pub semantics_known: bool,
     pub nodes: Vec<ConfigNode>,
@@ -40,6 +41,8 @@ pub struct ConfigNode {
     pub depth: usize,
     pub assignment_count: usize,
     pub symlink: bool,
+    #[serde(skip_serializing)]
+    pub content_revision: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -76,6 +79,9 @@ struct QueueEntry {
     path: PathBuf,
     depth: usize,
     edge_index: Option<usize>,
+    /// Index in Ghostty's mutable RepeatablePath list. Default roots are
+    /// loaded before that list is drained and therefore have no index.
+    include_index: Option<usize>,
 }
 
 pub fn build(
@@ -105,6 +111,7 @@ pub fn build(
             path,
             depth: 0,
             edge_index: None,
+            include_index: None,
         })
         .collect::<VecDeque<_>>();
     let mut visited = HashMap::<PathBuf, String>::new();
@@ -114,6 +121,12 @@ pub fn build(
     let mut diagnostics = Vec::new();
     let mut total_bytes = 0_u64;
     let mut parse_was_incomplete = false;
+    // Mirrors Config.@"config-file".value.items in Ghostty 1.3.1. A bare
+    // value clears this whole list, even while loadRecursiveFiles is already
+    // iterating it. Keeping the vector indices is important: Ghostty's `i`
+    // still increments after the current include, so entries newly appended
+    // at indices <= i are skipped rather than loaded.
+    let mut config_file_edges = Vec::<usize>::new();
 
     while let Some(item) = queue.pop_front() {
         if nodes.len() >= MAX_GRAPH_FILES {
@@ -140,7 +153,15 @@ pub fn build(
             Err(error) => {
                 if let Some(edge_index) = item.edge_index {
                     if let Some(edge) = edges.get_mut(edge_index) {
-                        edge.status = "missing".to_string();
+                        edge.status =
+                            if edge.optional && error.kind() == std::io::ErrorKind::NotFound {
+                                "optional_missing".to_string()
+                            } else {
+                                "missing".to_string()
+                            };
+                        if edge.optional && error.kind() == std::io::ErrorKind::NotFound {
+                            continue;
+                        }
                     }
                 }
                 diagnostics.push(diagnostic(
@@ -235,11 +256,12 @@ pub fn build(
                 .map(|metadata| metadata.file_type().is_symlink())
                 .unwrap_or(false)
                 || item.path != normalized,
+            content_revision: safe_write::revision(&bytes),
         });
 
         for assignment in assignments {
             if assignment.key == "config-file" {
-                if edges.len() >= MAX_GRAPH_EDGES || queue.len() >= MAX_GRAPH_EDGES {
+                if edges.len() >= MAX_GRAPH_EDGES {
                     diagnostics.push(diagnostic(
                         "graph_edge_limit",
                         format!("配置图超过 {MAX_GRAPH_EDGES} 条 include 边，已停止继续排队。"),
@@ -248,28 +270,76 @@ pub fn build(
                     ));
                     break;
                 }
-                let parsed = parse_include_value(&assignment.value);
-                let target = resolve_include(&normalized, &parsed.path);
-                let edge_index = edges.len();
-                edges.push(ConfigEdge {
-                    from_id: id.clone(),
-                    to_id: None,
-                    declared_path: parsed.path.clone(),
-                    line: assignment.line,
-                    optional: parsed.optional,
-                    status: "queued".to_string(),
-                });
-                if !target.exists() && parsed.optional {
-                    if let Some(edge) = edges.get_mut(edge_index) {
-                        edge.status = "optional_missing".to_string();
+                match parse_include_value(&assignment.value) {
+                    IncludeAction::Reset => {
+                        edges.push(ConfigEdge {
+                            from_id: id.clone(),
+                            to_id: None,
+                            declared_path: String::new(),
+                            line: assignment.line,
+                            optional: false,
+                            status: "queue_reset".to_string(),
+                        });
+                        reset_config_file_list(&mut queue, &mut edges, &mut config_file_edges);
                     }
-                    continue;
+                    IncludeAction::IgnoredEmpty { optional } => {
+                        edges.push(ConfigEdge {
+                            from_id: id.clone(),
+                            to_id: None,
+                            declared_path: String::new(),
+                            line: assignment.line,
+                            optional,
+                            status: "ignored_empty".to_string(),
+                        });
+                    }
+                    IncludeAction::Path(parsed) => {
+                        if queue.len() >= MAX_GRAPH_EDGES {
+                            diagnostics.push(diagnostic(
+                                "graph_edge_limit",
+                                format!(
+                                    "配置图超过 {MAX_GRAPH_EDGES} 条 include 边，已停止继续排队。"
+                                ),
+                                Some(&normalized),
+                                Some(assignment.line),
+                            ));
+                            break;
+                        }
+                        let target = resolve_include(&normalized, &parsed.path);
+                        let edge_index = edges.len();
+                        edges.push(ConfigEdge {
+                            from_id: id.clone(),
+                            to_id: None,
+                            declared_path: parsed.path.clone(),
+                            line: assignment.line,
+                            optional: parsed.optional,
+                            status: "queued".to_string(),
+                        });
+                        let include_index = config_file_edges.len();
+                        config_file_edges.push(edge_index);
+
+                        // Exact Ghostty 1.3.1 behavior when an include clears
+                        // config-file while loadRecursiveFiles is at index i:
+                        // the loop increments i after the file returns. Any
+                        // newly appended entries at indices 0..=i are never
+                        // visited. This looks surprising, but predicting a
+                        // source Ghostty did not load would be unsafe.
+                        if item
+                            .include_index
+                            .is_some_and(|current| include_index <= current)
+                        {
+                            if let Some(edge) = edges.get_mut(edge_index) {
+                                edge.status = "skipped_by_reset_cursor".to_string();
+                            }
+                            continue;
+                        }
+                        queue.push_back(QueueEntry {
+                            path: target,
+                            depth: item.depth + 1,
+                            edge_index: Some(edge_index),
+                            include_index: Some(include_index),
+                        });
+                    }
                 }
-                queue.push_back(QueueEntry {
-                    path: target,
-                    depth: item.depth + 1,
-                    edge_index: Some(edge_index),
-                });
             } else {
                 provenance.push(ProvenanceEntry {
                     key: assignment.key,
@@ -299,7 +369,10 @@ pub fn build(
         });
     diagnostics.truncate(MAX_GRAPH_DIAGNOSTICS);
 
+    let graph_revision = graph_revision(complete, &nodes, &edges, &provenance, &diagnostics);
+
     Ok(ConfigGraph {
+        graph_revision,
         complete,
         // This graph records assignment provenance only. It intentionally does
         // not claim scalar/append/reset/map merge semantics yet.
@@ -312,21 +385,110 @@ pub fn build(
     })
 }
 
+fn graph_revision(
+    complete: bool,
+    nodes: &[ConfigNode],
+    edges: &[ConfigEdge],
+    provenance: &[ProvenanceEntry],
+    diagnostics: &[GraphDiagnostic],
+) -> String {
+    let mut digest = Sha256::new();
+    digest.update(if complete {
+        b"complete".as_slice()
+    } else {
+        b"incomplete".as_slice()
+    });
+    for node in nodes {
+        digest.update(node.path.as_bytes());
+        digest.update([0]);
+        digest.update(node.content_revision.as_bytes());
+        digest.update(node.load_index.to_le_bytes());
+        digest.update(node.depth.to_le_bytes());
+        digest.update([u8::from(node.symlink)]);
+    }
+    for edge in edges {
+        digest.update(edge.from_id.as_bytes());
+        digest.update([0]);
+        if let Some(to_id) = &edge.to_id {
+            digest.update(to_id.as_bytes());
+        }
+        digest.update([0]);
+        digest.update(edge.declared_path.as_bytes());
+        digest.update(edge.line.to_le_bytes());
+        digest.update([u8::from(edge.optional)]);
+        digest.update(edge.status.as_bytes());
+    }
+    for entry in provenance {
+        digest.update(entry.key.as_bytes());
+        digest.update([0]);
+        digest.update(entry.source_id.as_bytes());
+        digest.update(entry.line.to_le_bytes());
+        digest.update(entry.load_index.to_le_bytes());
+    }
+    for diagnostic in diagnostics {
+        digest.update(diagnostic.code.as_bytes());
+        digest.update([0]);
+        if let Some(path) = &diagnostic.path {
+            digest.update(path.as_bytes());
+        }
+        digest.update(diagnostic.line.unwrap_or(0).to_le_bytes());
+    }
+    hex(&digest.finalize())
+}
+
 struct ParsedInclude {
     path: String,
     optional: bool,
 }
 
-fn parse_include_value(value: &str) -> ParsedInclude {
+enum IncludeAction {
+    Reset,
+    IgnoredEmpty { optional: bool },
+    Path(ParsedInclude),
+}
+
+fn parse_include_value(value: &str) -> IncludeAction {
     let trimmed = value.trim();
     let (optional, remaining) = if let Some(rest) = trimmed.strip_prefix('?') {
         (true, rest.trim())
     } else {
         (false, trimmed)
     };
-    ParsedInclude {
-        path: unquote(remaining).to_string(),
+    if !optional && trimmed.is_empty() {
+        return IncludeAction::Reset;
+    }
+    let path = unquote(remaining);
+    if path.is_empty() {
+        return IncludeAction::IgnoredEmpty { optional };
+    }
+    IncludeAction::Path(ParsedInclude {
+        path: path.to_string(),
         optional,
+    })
+}
+
+fn reset_config_file_list(
+    queue: &mut VecDeque<QueueEntry>,
+    edges: &mut [ConfigEdge],
+    config_file_edges: &mut Vec<usize>,
+) {
+    queue.retain(|entry| {
+        let Some(edge_index) = entry.edge_index else {
+            // Default roots are not RepeatablePath entries and survive a
+            // `config-file =` reset. Only config-file includes are discarded.
+            return true;
+        };
+        if let Some(edge) = edges.get_mut(edge_index) {
+            edge.status = "cancelled_by_reset".to_string();
+        }
+        false
+    });
+    for edge_index in config_file_edges.drain(..) {
+        if let Some(edge) = edges.get_mut(edge_index) {
+            if edge.status == "skipped_by_reset_cursor" {
+                edge.status = "cancelled_by_reset".to_string();
+            }
+        }
     }
 }
 
@@ -459,6 +621,227 @@ mod tests {
     }
 
     #[test]
+    fn bare_empty_include_resets_pending_includes_but_keeps_default_roots() {
+        let directory = tempfile::tempdir().unwrap();
+        let first_root = directory.path().join("config");
+        let second_root = directory.path().join("config.ghostty");
+        let cancelled = directory.path().join("cancelled.conf");
+        let surviving = directory.path().join("surviving.conf");
+        fs::write(
+            &first_root,
+            b"config-file = cancelled.conf\nconfig-file =\nfont-size = 12\n",
+        )
+        .unwrap();
+        fs::write(&second_root, b"config-file = surviving.conf\n").unwrap();
+        fs::write(&cancelled, b"background = 000000\n").unwrap();
+        fs::write(&surviving, b"foreground = ffffff\n").unwrap();
+
+        let graph = build(
+            vec![first_root, second_root],
+            vec![directory.path().to_path_buf()],
+        )
+        .unwrap();
+        let names = graph
+            .nodes
+            .iter()
+            .map(|node| {
+                Path::new(&node.path)
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(names, ["config", "config.ghostty", "surviving.conf"]);
+        assert_eq!(graph.edges[0].status, "cancelled_by_reset");
+        assert_eq!(graph.edges[1].status, "queue_reset");
+        assert_eq!(graph.edges[2].status, "loaded");
+        assert!(!graph
+            .provenance
+            .iter()
+            .any(|entry| entry.key == "background"));
+        assert!(graph
+            .provenance
+            .iter()
+            .any(|entry| entry.key == "foreground"));
+    }
+
+    #[test]
+    fn reset_in_first_include_skips_first_new_entry_at_the_current_cursor() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("config");
+        let first = directory.path().join("first.conf");
+        let cancelled = directory.path().join("cancelled.conf");
+        let surviving = directory.path().join("surviving.conf");
+        fs::write(
+            &root,
+            b"config-file = first.conf\nconfig-file = cancelled.conf\n",
+        )
+        .unwrap();
+        fs::write(&first, b"config-file =\nconfig-file = surviving.conf\n").unwrap();
+        fs::write(&cancelled, b"background = 000000\n").unwrap();
+        fs::write(&surviving, b"foreground = ffffff\n").unwrap();
+
+        let graph = build(vec![root], vec![directory.path().to_path_buf()]).unwrap();
+        let names = graph
+            .nodes
+            .iter()
+            .map(|node| {
+                Path::new(&node.path)
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(names, ["config", "first.conf"]);
+        assert_eq!(graph.edges[0].status, "loaded");
+        assert_eq!(graph.edges[1].status, "cancelled_by_reset");
+        assert_eq!(graph.edges[2].status, "queue_reset");
+        assert_eq!(graph.edges[3].status, "skipped_by_reset_cursor");
+        assert!(!graph
+            .provenance
+            .iter()
+            .any(|entry| entry.key == "foreground"));
+    }
+
+    #[test]
+    fn reset_in_later_include_skips_through_the_current_recursive_index() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("config");
+        let first = directory.path().join("first.conf");
+        let resetter = directory.path().join("resetter.conf");
+        let skipped_a = directory.path().join("skipped-a.conf");
+        let skipped_b = directory.path().join("skipped-b.conf");
+        let loaded_c = directory.path().join("loaded-c.conf");
+        fs::write(
+            &root,
+            b"config-file = first.conf\nconfig-file = resetter.conf\n",
+        )
+        .unwrap();
+        fs::write(&first, b"font-size = 11\n").unwrap();
+        fs::write(
+            &resetter,
+            b"config-file =\nconfig-file = skipped-a.conf\nconfig-file = skipped-b.conf\nconfig-file = loaded-c.conf\n",
+        )
+        .unwrap();
+        fs::write(&skipped_a, b"background = 111111\n").unwrap();
+        fs::write(&skipped_b, b"background = 222222\n").unwrap();
+        fs::write(&loaded_c, b"background = 333333\n").unwrap();
+
+        let graph = build(vec![root], vec![directory.path().to_path_buf()]).unwrap();
+        let names = graph
+            .nodes
+            .iter()
+            .map(|node| {
+                Path::new(&node.path)
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            names,
+            ["config", "first.conf", "resetter.conf", "loaded-c.conf"]
+        );
+        assert_eq!(graph.edges[0].status, "loaded");
+        assert_eq!(graph.edges[1].status, "loaded");
+        assert_eq!(graph.edges[2].status, "queue_reset");
+        assert_eq!(graph.edges[3].status, "skipped_by_reset_cursor");
+        assert_eq!(graph.edges[4].status, "skipped_by_reset_cursor");
+        assert_eq!(graph.edges[5].status, "loaded");
+        assert_eq!(
+            final_assignment_value(&graph, "background"),
+            Some("loaded-c.conf")
+        );
+    }
+
+    #[test]
+    fn optional_missing_include_still_consumes_a_recursive_cursor_slot() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("config");
+        let resetter = directory.path().join("resetter.conf");
+        let skipped_a = directory.path().join("skipped-a.conf");
+        let skipped_b = directory.path().join("skipped-b.conf");
+        let loaded_c = directory.path().join("loaded-c.conf");
+        fs::write(
+            &root,
+            b"config-file = ?missing.conf\nconfig-file = resetter.conf\n",
+        )
+        .unwrap();
+        fs::write(
+            &resetter,
+            b"config-file =\nconfig-file = skipped-a.conf\nconfig-file = skipped-b.conf\nconfig-file = loaded-c.conf\n",
+        )
+        .unwrap();
+        fs::write(&skipped_a, b"foreground = 111111\n").unwrap();
+        fs::write(&skipped_b, b"foreground = 222222\n").unwrap();
+        fs::write(&loaded_c, b"foreground = 333333\n").unwrap();
+
+        let graph = build(vec![root], vec![directory.path().to_path_buf()]).unwrap();
+
+        assert!(graph.complete);
+        assert_eq!(graph.edges[0].status, "optional_missing");
+        assert_eq!(graph.edges[1].status, "loaded");
+        assert_eq!(graph.edges[3].status, "skipped_by_reset_cursor");
+        assert_eq!(graph.edges[4].status, "skipped_by_reset_cursor");
+        assert_eq!(graph.edges[5].status, "loaded");
+        assert_eq!(
+            final_assignment_value(&graph, "foreground"),
+            Some("loaded-c.conf")
+        );
+    }
+
+    #[test]
+    fn quoted_and_optional_empty_include_values_are_ignored() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("config");
+        let included = directory.path().join("included.conf");
+        fs::write(
+            &root,
+            b"config-file = \"\"\nconfig-file = ?\nconfig-file = ?\"\"\nconfig-file = included.conf\n",
+        )
+        .unwrap();
+        fs::write(&included, b"font-size = 14\n").unwrap();
+
+        let graph = build(vec![root], vec![directory.path().to_path_buf()]).unwrap();
+
+        assert_eq!(graph.nodes.len(), 2);
+        assert_eq!(graph.edges.len(), 4);
+        assert_eq!(graph.edges[0].status, "ignored_empty");
+        assert!(!graph.edges[0].optional);
+        assert_eq!(graph.edges[1].status, "ignored_empty");
+        assert!(graph.edges[1].optional);
+        assert_eq!(graph.edges[2].status, "ignored_empty");
+        assert!(graph.edges[2].optional);
+        assert_eq!(graph.edges[3].status, "loaded");
+        assert!(graph.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn edge_reset_status_contributes_to_graph_revision() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("config");
+        fs::write(&root, b"config-file =\n").unwrap();
+        let graph = build(vec![root], vec![directory.path().to_path_buf()]).unwrap();
+        let mut changed_edges = graph.edges.clone();
+        changed_edges[0].status = "ignored_empty".to_string();
+
+        let changed_revision = graph_revision(
+            graph.complete,
+            &graph.nodes,
+            &changed_edges,
+            &graph.provenance,
+            &graph.diagnostics,
+        );
+        assert_ne!(graph.graph_revision, changed_revision);
+    }
+
+    #[test]
     fn non_utf8_files_make_the_observation_graph_incomplete() {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path().join("config");
@@ -471,5 +854,15 @@ mod tests {
             .diagnostics
             .iter()
             .any(|diagnostic| diagnostic.code == "invalid_encoding"));
+    }
+
+    fn final_assignment_value<'a>(graph: &'a ConfigGraph, key: &str) -> Option<&'a str> {
+        graph
+            .provenance
+            .iter()
+            .filter(|entry| entry.key == key)
+            .max_by_key(|entry| (entry.load_index, entry.line))
+            .and_then(|entry| Path::new(&entry.source_path).file_name())
+            .and_then(|name| name.to_str())
     }
 }
