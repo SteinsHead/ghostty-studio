@@ -20,6 +20,10 @@ the file.
 - Finds macOS and XDG config candidates, and asks you to choose only when more than one can be used.
 - Creates a new config safely, after confirmation, when no default config exists.
 - Lets you search and edit supported settings, with a contextual preview for visual changes.
+- Imports local PNG and JPEG backgrounds into a private image library, with multi-select, manual or
+  random switching, fit, position, tiling, visibility, and live preview controls.
+- Distinguishes the file you are editing from Ghostty's effective source, offers the winning include
+  when a later file would override a draft, and verifies saved scalar values with Ghostty itself.
 - Follows your system language by default, with instant Simplified Chinese and English switching.
 - Keeps the main journey focused on settings you can change, while the full Ghostty catalog remains
   available as a clear, searchable reference.
@@ -32,7 +36,7 @@ shell and file access in the webview.
 
 ## Download
 
-[Download Ghostty Studio v0.3.0](https://github.com/SteinsHead/ghostty-studio/releases/tag/v0.3.0)
+[Download Ghostty Studio v0.4.0](https://github.com/SteinsHead/ghostty-studio/releases/tag/v0.4.0)
 for Apple Silicon Macs running macOS 11 or later.
 
 This is an early preview. The app is ad-hoc signed but not Apple-notarized, so macOS may ask you to
@@ -44,10 +48,12 @@ from source if you prefer.
 Ghostty Studio is an early preview. The source is ready to explore, but a few limits are intentional:
 
 - The desktop app currently targets macOS and the writable contract is tested against Ghostty 1.3.1.
-- Ghostty 1.3.1 on macOS currently has 29 reviewed settings you can change. The rest remain
+- Ghostty 1.3.1 on macOS currently has 31 reviewed settings you can change. The rest remain
   searchable and explain why they need a different editing experience.
-- The terminal preview is a safe DOM simulation, and the source graph does not yet calculate every
-  final effective value across includes, resets, and repeatable settings.
+- The terminal preview is a safe DOM simulation. Studio models Ghostty 1.3.1's default roots and
+  mutable global include/reset queue for reviewed scalar writes. Source-dependent writes fail closed
+  on versions that have not passed the same compatibility audit; repeatable and unaudited semantics
+  stay read-only.
 - The extension manifest format and validator are developer-facing contracts for now. There is no
   extension browser, installer, or execution surface in the app.
 - The preview download is ad-hoc signed, not Developer ID signed or notarized.

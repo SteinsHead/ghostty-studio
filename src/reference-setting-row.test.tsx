@@ -29,13 +29,13 @@ describe("reference setting states", () => {
       <ReferenceSettingRow
         option={background}
         configured={{ key: background.key, occurrenceCount: 2, valueExposure: "available" }}
-        effectiveValueKnown={false}
         onAdjust={() => undefined}
       />,
     ));
 
     expect(container.textContent).toContain("多处设置");
-    expect(container.textContent).toContain("在文件中出现了 2 次");
+    expect(container.textContent).toContain("这份文件中出现了 2 次");
+    expect(container.textContent).toContain("请在配置文件中合并或编辑这些值");
     expect(container.querySelector("button")).toBeNull();
   });
 
@@ -44,14 +44,13 @@ describe("reference setting states", () => {
       <ReferenceSettingRow
         option={background}
         configured={{ key: background.key, occurrenceCount: 1, valueExposure: "available" }}
-        effectiveValueKnown
         readOnly
         onAdjust={() => undefined}
       />,
     ));
 
     expect(container.textContent).toContain("配置只读");
-    expect(container.textContent).toContain("切换到可写的配置位置");
+    expect(container.textContent).toContain("选择可写配置后即可调整");
     expect(container.querySelector("button")).toBeNull();
   });
 });

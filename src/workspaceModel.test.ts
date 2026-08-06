@@ -13,6 +13,34 @@ describe("workspace journey model", () => {
     expect(chooseStartupCandidate([candidate], null)?.id).toBe(candidate.id);
   });
 
+  it("opens the only root source when discovered include files are also selectable", () => {
+    const root = demoEnvironment.candidates[0];
+    const include = {
+      ...root,
+      id: "include-background",
+      label: "Include · background.conf",
+      path: "~/.config/ghostty/background.conf",
+      source: "include" as const,
+      priority: 4,
+    };
+
+    expect(chooseStartupCandidate([root, include], null)?.id).toBe(root.id);
+  });
+
+  it("honors a remembered include source when the user explicitly chose it", () => {
+    const root = demoEnvironment.candidates[0];
+    const include = {
+      ...root,
+      id: "include-background",
+      label: "Include · background.conf",
+      path: "~/.config/ghostty/background.conf",
+      source: "include" as const,
+      priority: 4,
+    };
+
+    expect(chooseStartupCandidate([root, include], include.id)?.id).toBe(include.id);
+  });
+
   it("asks once when several configuration files exist", () => {
     expect(chooseStartupCandidate(demoEnvironment.candidates, null)).toBeNull();
     expect(

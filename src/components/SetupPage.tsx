@@ -1,6 +1,7 @@
-import { AlertCircle, ArrowRight, FilePlus2, Ghost, RefreshCw, ShieldCheck } from "lucide-react";
+import { AlertCircle, ArrowRight, FilePlus2, RefreshCw, ShieldCheck } from "lucide-react";
 import { useI18n } from "../i18n";
 import type { EnvironmentReport } from "../types";
+import { StudioMark } from "./StudioMark";
 
 interface SetupPageProps {
   environment: EnvironmentReport | null;
@@ -24,7 +25,7 @@ export function SetupPage({
   const recoveringDraft = pendingChanges > 0;
 
   const title = recoveringDraft
-    ? text("草稿还在，重新连接后即可继续", "Your draft is safe. Reconnect to continue")
+    ? text("重新连接以继续编辑", "Reconnect to continue editing")
     : !ghosttyReady
     ? text("连接 Ghostty 后开始", "Connect Ghostty to get started")
     : hasMultipleSources
@@ -32,38 +33,36 @@ export function SetupPage({
       : text("打开你的 Ghostty 配置", "Open your Ghostty configuration");
   const description = recoveringDraft
     ? text(
-        `${pendingChanges} 项修改仍保留在本次应用中。重新连接原配置后，Studio 会先重新检查。`,
-        `${pendingChanges} unsaved ${pendingChanges === 1 ? "change is" : "changes are"} still available in this session. Studio will check ${pendingChanges === 1 ? "it" : "them"} again after reconnecting to the original file.`,
+        `本次会话保留 ${pendingChanges} 项修改。`,
+        `${pendingChanges} unsaved ${pendingChanges === 1 ? "change remains" : "changes remain"} in this session.`,
       )
     : !ghosttyReady
     ? text(
-        "安装 Ghostty 后重新检查。在确认版本和可用设置之前，Studio 不会改动任何文件。",
-        "Install Ghostty, then check again. Studio will not change any files until it confirms the version and available settings.",
+        "安装 Ghostty 后重新检查。",
+        "Install Ghostty, then check again.",
       )
     : hasMultipleSources
       ? text(
-          "发现了多个配置文件。选择常用的一份，Studio 会记住你的选择。",
-          "More than one configuration file was found. Choose the one you normally use and Studio will remember it.",
+          "发现多份配置，请选择要编辑的一份。",
+          "Multiple configurations found. Choose one to edit.",
         )
       : text(
-          "打开现有配置，或在 Ghostty 的默认位置安全创建一份新配置。",
-          "Open an existing file, or safely create a new one in Ghostty's default location.",
+          "选择现有配置，或在默认位置新建配置。",
+          "Choose an existing configuration or create one in the default location.",
         );
 
   return (
     <section className="setup-page" aria-labelledby="setup-title">
       <div className="setup-illustration" aria-hidden="true">
-        {recoveringDraft || ghosttyReady ? <FilePlus2 size={32} /> : <Ghost size={34} />}
+        {recoveringDraft || ghosttyReady ? <FilePlus2 size={32} /> : <StudioMark size={38} />}
       </div>
       <div className="setup-copy">
-        <span className="setup-kicker">
-          {recoveringDraft || ghosttyReady ? <ShieldCheck size={14} /> : <AlertCircle size={14} />}
-          {recoveringDraft
-            ? text("编辑已暂停", "Editing paused")
-            : ghosttyReady
-              ? text("本地处理，可随时恢复", "Local and recoverable")
-              : text("尚未连接", "Not connected")}
-        </span>
+        {(recoveringDraft || !ghosttyReady) && (
+          <span className="setup-kicker">
+            {recoveringDraft ? <ShieldCheck size={14} /> : <AlertCircle size={14} />}
+            {recoveringDraft ? text("编辑已暂停", "Editing paused") : text("尚未连接", "Not connected")}
+          </span>
+        )}
         <h1 id="setup-title">{title}</h1>
         <p>{description}</p>
       </div>
@@ -104,17 +103,9 @@ export function SetupPage({
           </button>
         )}
       </div>
-      <p className="setup-footnote">
-        {recoveringDraft
-          ? text(
-              "草稿只保留在本次打开的应用中。关闭前请重新连接，或明确放弃草稿。",
-              "This draft lasts only for the current app session. Reconnect or discard it before closing.",
-            )
-          : text(
-              "Studio 不会自动写入。保存前会由本机 Ghostty 检查，并创建恢复点。",
-              "Studio never saves automatically. Your installed Ghostty will check the configuration and a restore point will be created first.",
-            )}
-      </p>
+      {recoveringDraft && (
+        <p className="setup-footnote">{text("关闭应用会丢失草稿。", "Closing the app will discard this draft.")}</p>
+      )}
     </section>
   );
 }

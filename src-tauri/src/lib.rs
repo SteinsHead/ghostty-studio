@@ -7,19 +7,22 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Mutex,
+        Mutex, MutexGuard,
     },
 };
 
 use domain::{
+    background_assets,
     config_document::ConfigDocument,
-    config_graph, discovery, extension, ghostty,
+    config_graph, discovery, effective_config, extension, ghostty,
     safe_write::{self, revision},
     schema,
 };
 use error::CommandError;
 use models::{
-    ApplyResult, ChangePreview, ConfigCandidate, ConfigSession, ConfiguredSetting, DraftChange,
+    ApplyResult, BackgroundAssetImportFailure, BackgroundAssetImportResult, BackgroundAssetPreview,
+    BackgroundAssetReference, BackgroundAssetSummary, BackgroundAssetUsage, ChangeEffectPreview,
+    ChangePreview, ConfigCandidate, ConfigSession, ConfiguredSetting, DraftChange,
     EnvironmentReport, RuntimeOption, RuntimeSchema,
 };
 use tauri::{Manager, State};
@@ -45,6 +48,9 @@ struct StagedCandidate {
     diagnostics: Vec<String>,
     valid: bool,
     activation: String,
+    background_asset_id: Option<String>,
+    effect: ChangeEffectPreview,
+    dependency_revision: String,
 }
 
 struct PreparedSnapshotRestore {
@@ -57,6 +63,7 @@ struct PreparedSnapshotRestore {
 
 struct CurrentRuntimeContract {
     executable: PathBuf,
+    ghostty_version: Option<String>,
     editable_keys: HashSet<String>,
     editable_options: HashMap<String, RuntimeOption>,
     changed_writable_keys: HashSet<String>,
@@ -69,7 +76,14 @@ struct AppState {
     stages: Mutex<HashMap<String, StagedCandidate>>,
     runtime_schema: Mutex<Option<RuntimeSchema>>,
     mutation_in_flight: AtomicBool,
+    asset_store: Mutex<()>,
 }
+
+const BACKGROUND_IMAGE_KEY: &str = "background-image";
+const MANAGED_BACKGROUND_PREFIX: &str = "managed-image:";
+const EXTERNAL_BACKGROUND_TOKEN: &str = "external-image";
+const RESET_BACKGROUND_TOKEN: &str = "reset-background-image";
+const MAX_BACKGROUND_IMPORT_BATCH: usize = 20;
 
 #[derive(Debug)]
 struct MutationGuard<'a>(&'a AtomicBool);
@@ -82,8 +96,8 @@ impl Drop for MutationGuard<'_> {
 
 #[tauri::command]
 fn probe_environment(state: State<'_, AppState>) -> Result<EnvironmentReport, CommandError> {
-    let candidates = discovery::discover_config_candidates();
-    let existing_count = candidates
+    let default_candidates = discovery::discover_config_candidates();
+    let existing_count = default_candidates
         .iter()
         .filter(|candidate| candidate.exists)
         .count();
@@ -93,9 +107,40 @@ fn probe_environment(state: State<'_, AppState>) -> Result<EnvironmentReport, Co
             "检测到 {existing_count} 个 Ghostty 默认配置层；最终值可能来自不同文件。"
         ));
     }
-    if candidates.iter().any(|candidate| candidate.symlink) {
+    if default_candidates.iter().any(|candidate| candidate.symlink) {
         warnings.push("检测到符号链接；写入前需要单独确认真实目标。".to_string());
     }
+    let candidates = match build_config_graph_for(&default_candidates) {
+        Ok(graph) => {
+            if graph
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "external_include_blocked")
+            {
+                warnings.push(
+                    "有 include 位于 Ghostty 默认配置目录之外；尚未授权前，生效来源保持只读。"
+                        .to_string(),
+                );
+            } else if !graph.complete {
+                warnings
+                    .push("配置来源未能完整读取；确认完整关系前，相关设置保持只读。".to_string());
+            } else if graph
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "cycle_or_duplicate")
+            {
+                warnings.push(
+                    "配置中存在重复或循环 include；确认 Ghostty 的处理结果前，相关设置保持只读。"
+                        .to_string(),
+                );
+            }
+            workspace_candidates(&default_candidates, &graph)
+        }
+        Err(_) => {
+            warnings.push("部分 include 来源无法安全读取；生效来源会保持未确认状态。".to_string());
+            default_candidates.clone()
+        }
+    };
     let mut candidate_store = state
         .candidates
         .lock()
@@ -203,16 +248,7 @@ fn inspect_extension_manifest(
 #[tauri::command]
 fn load_config_graph() -> Result<config_graph::ConfigGraph, CommandError> {
     let candidates = discovery::discover_config_candidates();
-    let roots = candidates
-        .iter()
-        .filter(|candidate| candidate.exists)
-        .map(|candidate| PathBuf::from(&candidate.path))
-        .collect::<Vec<_>>();
-    let allowed_roots = candidates
-        .iter()
-        .filter_map(|candidate| PathBuf::from(&candidate.path).parent().map(PathBuf::from))
-        .collect::<Vec<_>>();
-    let mut graph = config_graph::build(roots, allowed_roots)?;
+    let mut graph = build_config_graph_for(&candidates)?;
     let id_map = graph
         .nodes
         .iter()
@@ -273,17 +309,455 @@ fn load_config_graph() -> Result<config_graph::ConfigGraph, CommandError> {
     Ok(graph)
 }
 
+fn build_config_graph_for(
+    candidates: &[ConfigCandidate],
+) -> Result<config_graph::ConfigGraph, CommandError> {
+    let roots = candidates
+        .iter()
+        .filter(|candidate| candidate.source != "include" && candidate.exists)
+        .map(|candidate| PathBuf::from(&candidate.path))
+        .collect::<Vec<_>>();
+    let allowed_roots = candidates
+        .iter()
+        .filter(|candidate| candidate.source != "include")
+        .filter_map(|candidate| PathBuf::from(&candidate.path).parent().map(PathBuf::from))
+        .collect::<Vec<_>>();
+    config_graph::build(roots, allowed_roots)
+}
+
+fn workspace_candidates(
+    default_candidates: &[ConfigCandidate],
+    graph: &config_graph::ConfigGraph,
+) -> Vec<ConfigCandidate> {
+    let root_paths = default_candidates
+        .iter()
+        .filter(|candidate| candidate.exists)
+        .filter_map(|candidate| std::fs::canonicalize(&candidate.path).ok())
+        .collect::<HashSet<_>>();
+    let mut result = default_candidates.to_vec();
+    let mut ids = result
+        .iter()
+        .map(|candidate| candidate.id.clone())
+        .collect::<HashSet<_>>();
+    for node in &graph.nodes {
+        let path = PathBuf::from(&node.path);
+        if root_paths.contains(&path) {
+            continue;
+        }
+        let candidate = discovery::include_candidate(path, node.load_index, node.symlink);
+        if candidate.exists && ids.insert(candidate.id.clone()) {
+            result.push(candidate);
+        }
+    }
+    result.sort_by_key(|candidate| candidate.priority);
+    result
+}
+
+#[tauri::command]
+fn list_background_assets(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Vec<BackgroundAssetSummary>, CommandError> {
+    let _asset_guard = lock_asset_store(&state)?;
+    let data_root = app_data_root(&app)?;
+    Ok(annotate_background_asset_usage(
+        &data_root,
+        background_assets::list(&data_root)?,
+    ))
+}
+
+#[tauri::command]
+fn get_background_asset_preview(
+    app: tauri::AppHandle,
+    asset_id: String,
+    state: State<'_, AppState>,
+) -> Result<BackgroundAssetPreview, CommandError> {
+    let _asset_guard = lock_asset_store(&state)?;
+    background_assets::preview(&app_data_root(&app)?, &asset_id)
+}
+
+fn document_references_background_path(
+    document: &ConfigDocument,
+    source_config: Option<&Path>,
+    path: &Path,
+) -> bool {
+    document
+        .values()
+        .get(BACKGROUND_IMAGE_KEY)
+        .is_some_and(|values| {
+            values.iter().any(|value| {
+                background_assets::configured_image_path(source_config, value)
+                    .is_some_and(|value| equivalent_existing_paths(path, &value))
+            })
+        })
+}
+
+fn loaded_background_references(
+) -> Result<HashMap<PathBuf, Vec<BackgroundAssetReference>>, CommandError> {
+    let discovered = discovery::discover_config_candidates();
+    loaded_background_references_for(&discovered)
+}
+
+fn loaded_background_references_for(
+    discovered: &[ConfigCandidate],
+) -> Result<HashMap<PathBuf, Vec<BackgroundAssetReference>>, CommandError> {
+    let graph = build_config_graph_for(discovered).map_err(|_| {
+        CommandError::new(
+            "background_asset_usage_unknown",
+            "the current Ghostty configuration graph could not be checked",
+        )
+    })?;
+    if !graph.complete {
+        return Err(CommandError::new(
+            "background_asset_usage_unknown",
+            "the current Ghostty configuration graph is incomplete",
+        ));
+    }
+    let candidates = workspace_candidates(discovered, &graph);
+    let candidate_paths = candidates
+        .iter()
+        .filter_map(|candidate| {
+            std::fs::canonicalize(&candidate.path)
+                .ok()
+                .map(|path| (path, candidate))
+        })
+        .collect::<HashMap<_, _>>();
+    let mut references = HashMap::<PathBuf, Vec<BackgroundAssetReference>>::new();
+
+    for node in &graph.nodes {
+        let node_path = PathBuf::from(&node.path);
+        let bytes = safe_write::read_regular_target_file(&node_path).map_err(|_| {
+            CommandError::new(
+                "background_asset_usage_unknown",
+                "a loaded Ghostty configuration could not be checked",
+            )
+        })?;
+        if safe_write::revision(&bytes) != node.content_revision {
+            return Err(CommandError::new(
+                "background_asset_usage_unknown",
+                "a Ghostty configuration changed while image usage was being checked",
+            ));
+        }
+        let document = ConfigDocument::parse(&bytes).map_err(|_| {
+            CommandError::new(
+                "background_asset_usage_unknown",
+                "a loaded Ghostty configuration could not be parsed",
+            )
+        })?;
+        let candidate = candidate_paths.get(&node_path);
+        let reference = BackgroundAssetReference {
+            candidate_id: candidate.map(|candidate| candidate.id.clone()),
+            source_label: candidate.map(|candidate| candidate.label.clone()),
+            writable: candidate.is_some_and(|candidate| candidate.writable && !candidate.symlink),
+        };
+        let Some(values) = document.values().remove(BACKGROUND_IMAGE_KEY) else {
+            continue;
+        };
+        for value in values {
+            let Some(path) = background_assets::configured_image_path(Some(&node_path), &value)
+            else {
+                continue;
+            };
+            let Ok(identity) = std::fs::canonicalize(path) else {
+                continue;
+            };
+            let entries = references.entry(identity).or_default();
+            if !entries.iter().any(|existing| {
+                existing.candidate_id == reference.candidate_id
+                    && existing.source_label == reference.source_label
+            }) {
+                entries.push(reference.clone());
+            }
+        }
+    }
+    Ok(references)
+}
+
+fn annotate_background_asset_usage(
+    data_root: &Path,
+    mut assets: Vec<BackgroundAssetSummary>,
+) -> Vec<BackgroundAssetSummary> {
+    let Ok(references) = loaded_background_references() else {
+        for asset in &mut assets {
+            asset.usage = BackgroundAssetUsage {
+                status: "unknown".to_string(),
+                references: Vec::new(),
+            };
+        }
+        return assets;
+    };
+
+    for asset in &mut assets {
+        let identity = background_assets::resolve_asset_path(data_root, &asset.id)
+            .ok()
+            .and_then(|path| std::fs::canonicalize(path).ok());
+        match identity {
+            Some(identity) if references.contains_key(&identity) => {
+                asset.usage = BackgroundAssetUsage {
+                    status: "referenced".to_string(),
+                    references: references.get(&identity).cloned().unwrap_or_default(),
+                };
+            }
+            Some(_) => {
+                asset.usage = BackgroundAssetUsage {
+                    status: "available".to_string(),
+                    references: Vec::new(),
+                };
+            }
+            None => {
+                asset.usage = BackgroundAssetUsage {
+                    status: "unknown".to_string(),
+                    references: Vec::new(),
+                };
+            }
+        }
+    }
+    assets
+}
+
+fn background_asset_usage(
+    data_root: &Path,
+    path: &Path,
+    state: &AppState,
+) -> Result<(bool, usize), CommandError> {
+    let sessions = state
+        .sessions
+        .lock()
+        .map_err(|_| CommandError::new("state_poisoned", "session state is unavailable"))?
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    let session_targets = sessions
+        .iter()
+        .map(|session| session.path.clone())
+        .collect::<HashSet<_>>();
+    let identity = std::fs::canonicalize(path).map_err(|_| {
+        CommandError::new(
+            "background_asset_usage_unknown",
+            "the managed image identity could not be checked",
+        )
+    })?;
+    if loaded_background_references()?.contains_key(&identity) {
+        return Ok((true, 0));
+    }
+
+    let mut snapshot_references = 0_usize;
+    for target in session_targets {
+        for snapshot in safe_write::list_snapshots(data_root, &target)? {
+            let bytes = safe_write::read_snapshot(data_root, &target, &snapshot.id)?;
+            if document_references_background_path(
+                &ConfigDocument::parse(&bytes)?,
+                Some(&target),
+                path,
+            ) {
+                snapshot_references = snapshot_references.saturating_add(1);
+            }
+        }
+    }
+    Ok((false, snapshot_references))
+}
+
+fn invalidate_background_stages(path: &Path, state: &AppState) -> Result<(), CommandError> {
+    let session_paths = state
+        .sessions
+        .lock()
+        .map_err(|_| CommandError::new("state_poisoned", "session state is unavailable"))?
+        .iter()
+        .map(|(id, session)| (id.clone(), session.path.clone()))
+        .collect::<HashMap<_, _>>();
+    let staged = state
+        .stages
+        .lock()
+        .map_err(|_| CommandError::new("state_poisoned", "stage state is unavailable"))?
+        .iter()
+        .map(|(token, stage)| {
+            (
+                token.clone(),
+                stage.bytes.clone(),
+                session_paths.get(&stage.session_id).cloned(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut invalidated = Vec::new();
+    for (token, bytes, source_config) in staged {
+        if document_references_background_path(
+            &ConfigDocument::parse(&bytes)?,
+            source_config.as_deref(),
+            path,
+        ) {
+            invalidated.push(token);
+        }
+    }
+    if invalidated.is_empty() {
+        return Ok(());
+    }
+    let mut stages = state
+        .stages
+        .lock()
+        .map_err(|_| CommandError::new("state_poisoned", "stage state is unavailable"))?;
+    for token in invalidated {
+        stages.remove(&token);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn delete_background_asset(
+    app: tauri::AppHandle,
+    asset_id: String,
+    locale: String,
+    state: State<'_, AppState>,
+) -> Result<(), CommandError> {
+    let locale = UiLocale::parse(&locale)?;
+    let _mutation_guard = acquire_mutation(&state)?;
+    let data_root = app_data_root(&app)?;
+    let (asset_path, snapshot_references, display_name) = {
+        let _asset_guard = lock_asset_store(&state)?;
+        let asset_path = background_assets::resolve_asset_path(&data_root, &asset_id)?;
+        let (in_use, snapshot_references) =
+            background_asset_usage(&data_root, &asset_path, &state)?;
+        if in_use {
+            return Err(CommandError::new(
+                "background_asset_in_use",
+                "the image is still used by a Ghostty configuration",
+            ));
+        }
+        let display_name = background_assets::list(&data_root)?
+            .into_iter()
+            .find(|asset| asset.id == asset_id)
+            .map(|asset| asset.display_name)
+            .unwrap_or_else(|| "Background image".to_string());
+        (asset_path, snapshot_references, display_name)
+    };
+    let (message, confirm_label, cancel_label) = match locale {
+        UiLocale::ZhCn => (
+            format!(
+                "从图片库删除“{display_name}”？\n\n原始文件不受影响。{}",
+                if snapshot_references > 0 {
+                    format!(
+                        "\n\n{snapshot_references} 个恢复点仍引用此图片，删除后无法恢复图片。"
+                    )
+                } else {
+                    String::new()
+                }
+            ),
+            "删除图片".to_string(),
+            "取消".to_string(),
+        ),
+        UiLocale::En => (
+            format!(
+                "Delete “{display_name}” from the image library?\n\nYour original file is unaffected.{}",
+                if snapshot_references > 0 {
+                    format!(
+                        "\n\n{snapshot_references} restore {} still reference this image and will no longer restore it.",
+                        if snapshot_references == 1 { "point" } else { "points" }
+                    )
+                } else {
+                    String::new()
+                }
+            ),
+            "Delete image".to_string(),
+            "Cancel".to_string(),
+        ),
+    };
+    require_native_confirmation(&app, message, confirm_label, cancel_label).await?;
+    let _asset_guard = lock_asset_store(&state)?;
+    let confirmed_path = background_assets::resolve_asset_path(&data_root, &asset_id)?;
+    if confirmed_path != asset_path
+        || background_asset_usage(&data_root, &confirmed_path, &state)?.0
+    {
+        return Err(CommandError::new(
+            "background_asset_in_use",
+            "the image became active while deletion was being confirmed",
+        ));
+    }
+    // A canceled or rejected deletion must not disturb a reviewed change.
+    // Invalidate dependent stages only after the final reference check passes.
+    invalidate_background_stages(&confirmed_path, &state)?;
+    background_assets::remove(&data_root, &asset_id)
+}
+
+#[tauri::command]
+async fn choose_background_images(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<BackgroundAssetImportResult, CommandError> {
+    let picker_app = app.clone();
+    let selected = tauri::async_runtime::spawn_blocking(move || {
+        picker_app
+            .dialog()
+            .file()
+            .add_filter("PNG and JPEG images", &["png", "jpg", "jpeg", "jfif"])
+            .blocking_pick_files()
+    })
+    .await
+    .map_err(|error| {
+        CommandError::new(
+            "background_picker_failed",
+            format!("the system image picker did not finish: {error}"),
+        )
+    })?;
+    let Some(selected) = selected else {
+        return Ok(BackgroundAssetImportResult {
+            canceled: true,
+            assets: Vec::new(),
+            rejected: Vec::new(),
+        });
+    };
+    if selected.len() > MAX_BACKGROUND_IMPORT_BATCH {
+        return Err(CommandError::new(
+            "background_import_batch_too_large",
+            "select no more than 20 images at once",
+        ));
+    }
+    let _asset_guard = lock_asset_store(&state)?;
+    let data_root = app_data_root(&app)?;
+    let mut assets = Vec::new();
+    let mut rejected = Vec::new();
+    for selected_path in selected {
+        let path = match selected_path.into_path() {
+            Ok(path) => path,
+            Err(_) => {
+                rejected.push(BackgroundAssetImportFailure {
+                    display_name: "Selected image".to_string(),
+                    code: "background_image_unreadable".to_string(),
+                });
+                continue;
+            }
+        };
+        let display_name = background_assets::display_name_for_path(&path);
+        match background_assets::import(&data_root, &path) {
+            Ok(asset) => assets.push(asset),
+            Err(error) => rejected.push(BackgroundAssetImportFailure {
+                display_name,
+                code: error.code.to_string(),
+            }),
+        }
+    }
+    let mut seen = HashSet::new();
+    assets.retain(|asset| seen.insert(asset.id.clone()));
+    let assets = annotate_background_asset_usage(&data_root, assets);
+    Ok(BackgroundAssetImportResult {
+        canceled: false,
+        assets,
+        rejected,
+    })
+}
+
 #[tauri::command]
 fn open_config(
+    app: tauri::AppHandle,
     candidate_id: String,
     state: State<'_, AppState>,
 ) -> Result<ConfigSession, CommandError> {
     let _mutation_guard = acquire_mutation(&state)?;
-    open_config_session(&candidate_id, &state)
+    let data_root = app_data_root(&app)?;
+    open_config_session(&candidate_id, &data_root, &state)
 }
 
 fn open_config_session(
     candidate_id: &str,
+    data_root: &Path,
     state: &AppState,
 ) -> Result<ConfigSession, CommandError> {
     if candidate_id.len() > 128 {
@@ -320,7 +794,7 @@ fn open_config_session(
     let revision = revision(&bytes);
     let session_id = Uuid::new_v4().to_string();
     let read_only = !candidate.writable || candidate.symlink;
-    let (safe_keys, known_keys) = {
+    let (safe_keys, known_keys, schema_version) = {
         let schema = state
             .runtime_schema
             .lock()
@@ -337,16 +811,28 @@ fn open_config_session(
             .filter(|option| is_public_setting_key(&option.key))
             .map(|option| option.key.clone())
             .collect::<HashSet<_>>();
-        (editable_keys_from_schema(schema), known_keys)
+        (
+            editable_keys_from_schema(schema),
+            known_keys,
+            schema.ghostty_version.clone(),
+        )
     };
     let all_values = document.values();
+    let background_image = background_assets::state_for_value(
+        data_root,
+        Some(&path),
+        all_values
+            .get(BACKGROUND_IMAGE_KEY)
+            .and_then(|values| values.last())
+            .map(String::as_str),
+    );
     let configured_settings = all_values
         .iter()
         .filter(|(key, _)| known_keys.contains(*key))
         .map(|(key, configured_values)| ConfiguredSetting {
             key: key.clone(),
             occurrence_count: configured_values.len(),
-            value_exposure: if safe_keys.contains(key) {
+            value_exposure: if key != BACKGROUND_IMAGE_KEY && safe_keys.contains(key) {
                 "available"
             } else {
                 "protected"
@@ -360,12 +846,58 @@ fn open_config_session(
         .count();
     let hidden_value_count = all_values
         .keys()
-        .filter(|key| known_keys.contains(*key) && !safe_keys.contains(*key))
+        .filter(|key| {
+            known_keys.contains(*key)
+                && (key.as_str() == BACKGROUND_IMAGE_KEY || !safe_keys.contains(*key))
+        })
         .count();
     let values = all_values
+        .clone()
         .into_iter()
-        .filter(|(key, _)| safe_keys.contains(key) && known_keys.contains(key))
+        .filter(|(key, _)| {
+            key != BACKGROUND_IMAGE_KEY && safe_keys.contains(key) && known_keys.contains(key)
+        })
         .collect();
+    let mut configured_effect_keys = safe_keys.iter().cloned().collect::<Vec<_>>();
+    configured_effect_keys.push(BACKGROUND_IMAGE_KEY.to_string());
+    let default_candidates = discovery::discover_config_candidates();
+    let mut effect_analysis = build_config_graph_for(&default_candidates)
+        .ok()
+        .map(|graph| {
+            let candidates = workspace_candidates(&default_candidates, &graph);
+            effective_config::setting_effects(
+                &graph,
+                &path,
+                configured_effect_keys.clone(),
+                &candidates,
+                schema_version.as_deref(),
+            )
+        })
+        .unwrap_or_else(|| {
+            configured_effect_keys
+                .iter()
+                .cloned()
+                .map(|key| {
+                    (
+                        key,
+                        models::SettingEffect {
+                            status: "unverified".to_string(),
+                            source_candidate_id: None,
+                            source_label: None,
+                        },
+                    )
+                })
+                .collect()
+        });
+    let (effective_values_known, effective_values, effective_background_image) =
+        read_effective_values(data_root, &safe_keys);
+    if !effective_values_known {
+        for effect in effect_analysis.values_mut() {
+            effect.status = "unverified".to_string();
+            effect.source_candidate_id = None;
+            effect.source_label = None;
+        }
+    }
     let mut diagnostics = Vec::new();
     if candidate.symlink {
         diagnostics.push("这份配置通过符号链接载入，因此当前只能查看。".to_string());
@@ -416,7 +948,58 @@ fn open_config_session(
         configured_settings,
         unrecognized_setting_count,
         diagnostics,
+        background_image,
+        effective_values_known,
+        effective_values,
+        effective_background_image,
+        setting_effects: effect_analysis,
     })
+}
+
+fn read_effective_values(
+    data_root: &Path,
+    safe_keys: &HashSet<String>,
+) -> (
+    bool,
+    std::collections::BTreeMap<String, Vec<String>>,
+    models::BackgroundImageState,
+) {
+    let unavailable = || {
+        (
+            false,
+            std::collections::BTreeMap::new(),
+            models::BackgroundImageState {
+                kind: "none".to_string(),
+                asset_id: None,
+            },
+        )
+    };
+    let Some(executable) = ghostty::locate() else {
+        return unavailable();
+    };
+    let Ok(validation) = ghostty::validate_default_config(&executable) else {
+        return unavailable();
+    };
+    if !validation.valid {
+        return unavailable();
+    }
+    let Ok(output) = ghostty::show_effective_config(&executable) else {
+        return unavailable();
+    };
+    let Ok(document) = ConfigDocument::parse(output.as_bytes()) else {
+        return unavailable();
+    };
+    let mut all_values = document.values();
+    let effective_background_image = background_assets::state_for_value(
+        data_root,
+        None,
+        all_values
+            .get(BACKGROUND_IMAGE_KEY)
+            .and_then(|values| values.last())
+            .map(String::as_str),
+    );
+    all_values.retain(|key, _| key != BACKGROUND_IMAGE_KEY && safe_keys.contains(key));
+    (true, all_values, effective_background_image)
 }
 
 #[tauri::command]
@@ -463,14 +1046,14 @@ async fn create_config(
     let (message, confirm_label, cancel_label) = match locale {
         UiLocale::ZhCn => (
             format!(
-                "将在 {visible_path} 创建一个空的 Ghostty 配置文件。\n\n新目录权限为 0700，文件权限为 0600。如果另一个程序先创建目标，Ghostty Studio 会停止且不会覆盖。"
+                "在 {visible_path} 创建空白 Ghostty 配置？\n\n如果文件已经存在，将取消创建且不会覆盖。"
             ),
             "创建配置".to_string(),
             "取消".to_string(),
         ),
         UiLocale::En => (
             format!(
-                "Create an empty Ghostty configuration at {visible_path}.\n\nNew folders use 0700 permissions and the file uses 0600. If another program creates the destination first, Ghostty Studio will stop without overwriting it."
+                "Create an empty Ghostty configuration at {visible_path}?\n\nIf the file already exists, creation will be cancelled without overwriting it."
             ),
             "Create configuration".to_string(),
             "Cancel".to_string(),
@@ -541,7 +1124,8 @@ async fn create_config(
             .lock()
             .map_err(|_| CommandError::new("state_poisoned", "stage state is unavailable"))?
             .clear();
-        let mut session = open_config_session(&candidate_id, &state)?;
+        let data_root = app_data_root(&app)?;
+        let mut session = open_config_session(&candidate_id, &data_root, &state)?;
         if session.revision != outcome.revision {
             return Err(CommandError::new(
                 "post_creation_conflict",
@@ -718,6 +1302,7 @@ fn reconcile_state_after_creation_failure(state: &AppState) -> Result<(), Comman
 
 #[tauri::command]
 fn stage_changes(
+    app: tauri::AppHandle,
     session_id: String,
     revision: String,
     changes: Vec<DraftChange>,
@@ -772,8 +1357,10 @@ fn stage_changes(
     }
 
     let contract = current_runtime_contract(&state)?;
+    let data_root = app_data_root(&app)?;
     let mut candidate_document = session.document.clone();
     let mut trusted_changes = Vec::with_capacity(changes.len());
+    let mut background_asset_id = None;
     for change in changes {
         if !contract.editable_keys.contains(&change.key) {
             return Err(CommandError::new(
@@ -806,6 +1393,61 @@ fn stage_changes(
             .values()
             .remove(&change.key)
             .unwrap_or_default();
+        if change.key == BACKGROUND_IMAGE_KEY {
+            let expected_before = public_background_values(background_assets::state_for_value(
+                &data_root,
+                Some(&session.path),
+                before.last().map(String::as_str),
+            ));
+            if change.before != expected_before {
+                return Err(CommandError::new(
+                    "background_draft_changed",
+                    "the background image draft no longer matches the open configuration",
+                ));
+            }
+            let next_token = change.after.first().map(String::as_str).unwrap_or_default();
+            if change.after.len() > 1 {
+                return Err(CommandError::new(
+                    "complex_setting_requires_editor",
+                    "background-image accepts one managed image",
+                ));
+            }
+            if next_token.is_empty() {
+                candidate_document.remove_scalar(BACKGROUND_IMAGE_KEY)?;
+            } else if next_token == RESET_BACKGROUND_TOKEN {
+                // An empty Ghostty value is an explicit reset to the default.
+                // Removing the line would instead expose an earlier source.
+                candidate_document.set_scalar(BACKGROUND_IMAGE_KEY, "")?;
+            } else {
+                let asset_id = next_token
+                    .strip_prefix(MANAGED_BACKGROUND_PREFIX)
+                    .ok_or_else(|| {
+                        CommandError::new(
+                            "invalid_background_selection",
+                            "background-image can only select an imported managed image",
+                        )
+                    })?;
+                let managed_path = background_assets::resolve_asset_path(&data_root, asset_id)?;
+                let managed_value = managed_path.to_str().ok_or_else(|| {
+                    CommandError::new(
+                        "background_asset_path_unavailable",
+                        "the managed image path is not valid UTF-8",
+                    )
+                })?;
+                candidate_document.set_scalar(BACKGROUND_IMAGE_KEY, managed_value)?;
+                background_asset_id = Some(asset_id.to_string());
+            }
+            if expected_before == change.after && next_token != RESET_BACKGROUND_TOKEN {
+                continue;
+            }
+            trusted_changes.push(DraftChange {
+                key: change.key,
+                before: expected_before,
+                after: change.after,
+            });
+            continue;
+        }
+
         let next = change.after.first().cloned().unwrap_or_default();
         if !next.is_empty() {
             let option = contract.editable_options.get(&change.key).ok_or_else(|| {
@@ -850,6 +1492,39 @@ fn stage_changes(
     }
     let validation =
         safe_write::validate_candidate(&contract.executable, &session.path, &candidate_bytes)?;
+    let default_candidates = discovery::discover_config_candidates();
+    let (effect, dependency_revision) = match build_config_graph_for(&default_candidates) {
+        Ok(graph) => {
+            let candidates = workspace_candidates(&default_candidates, &graph);
+            (
+                effective_config::preview_change_effect(
+                    &graph,
+                    &session.path,
+                    &trusted_changes,
+                    &candidates,
+                    contract.ghostty_version.as_deref(),
+                ),
+                effective_config::dependency_revision(
+                    &graph,
+                    &default_candidates,
+                    &session.path,
+                    contract.ghostty_version.as_deref(),
+                ),
+            )
+        }
+        Err(_) => (
+            ChangeEffectPreview {
+                status: "unverified".to_string(),
+                affected_keys: trusted_changes
+                    .iter()
+                    .map(|change| change.key.clone())
+                    .collect(),
+                suggested_candidate_id: None,
+                suggested_label: None,
+            },
+            "unavailable".to_string(),
+        ),
+    };
     let token = Uuid::new_v4().to_string();
     let unified_diff = render_setting_diff(&trusted_changes);
     let activation = activation_for_changes(&trusted_changes, &contract.editable_options);
@@ -861,6 +1536,9 @@ fn stage_changes(
         diagnostics: validation.diagnostics.clone(),
         valid: validation.valid,
         activation: activation.clone(),
+        background_asset_id,
+        effect: effect.clone(),
+        dependency_revision,
     };
     let mut stages = state
         .stages
@@ -883,6 +1561,7 @@ fn stage_changes(
         diagnostics: validation.diagnostics,
         valid: validation.valid,
         activation,
+        effect,
     })
 }
 
@@ -918,6 +1597,7 @@ async fn apply_changes(
             "Ghostty rejected the staged configuration",
         ));
     }
+    require_effective_write_plan(&stage.effect)?;
 
     let session = state
         .sessions
@@ -932,18 +1612,24 @@ async fn apply_changes(
             "this session has not been granted write access",
         ));
     }
+    let data_root = app_data_root(&app)?;
+    if let Some(asset_id) = stage.background_asset_id.as_deref() {
+        background_assets::resolve_asset_path(&data_root, asset_id)?;
+    }
     let contract = current_runtime_contract(&state)?;
     require_unchanged_review_contract(&stage.changes, &contract.changed_writable_keys)?;
     require_current_change_keys(&stage.changes, &contract.editable_keys)?;
+    require_current_effective_plan(&stage, &session, &contract)?;
     let changed_keys = stage
         .changes
         .iter()
         .map(|change| change.key.as_str())
         .collect::<Vec<_>>();
+    let trusted_target = display_path(&session.path);
     let (message, confirm_label, cancel_label) = match locale {
         UiLocale::ZhCn => (
             format!(
-                "将保存 {} 项修改：{}。\n\n保存前会自动创建恢复点。",
+                "保存位置：{trusted_target}\n\n将保存 {} 项修改：{}。\n\n保存前会自动创建恢复点。",
                 stage.changes.len(),
                 changed_keys.join("、")
             ),
@@ -952,7 +1638,7 @@ async fn apply_changes(
         ),
         UiLocale::En => (
             format!(
-                "Save {} {}: {}.\n\nA restore point will be created first.",
+                "Save destination: {trusted_target}\n\nSave {} {}: {}.\n\nA restore point will be created first.",
                 stage.changes.len(),
                 if stage.changes.len() == 1 {
                     "change"
@@ -966,9 +1652,13 @@ async fn apply_changes(
         ),
     };
     require_native_confirmation(&app, message, confirm_label, cancel_label).await?;
+    if let Some(asset_id) = stage.background_asset_id.as_deref() {
+        background_assets::resolve_asset_path(&data_root, asset_id)?;
+    }
     let contract = current_runtime_contract(&state)?;
     require_unchanged_review_contract(&stage.changes, &contract.changed_writable_keys)?;
     require_current_change_keys(&stage.changes, &contract.editable_keys)?;
+    require_current_effective_plan(&stage, &session, &contract)?;
     let current_validation =
         safe_write::validate_candidate(&contract.executable, &session.path, &stage.bytes)?;
     if !current_validation.valid {
@@ -980,7 +1670,6 @@ async fn apply_changes(
             ),
         ));
     }
-    let data_root = app_data_root(&app)?;
     let outcome = write_for_open_session(&data_root, &state, &session_id, &session, &stage.bytes)?;
 
     let final_validation = ghostty::validate_default_config(&contract.executable);
@@ -1009,6 +1698,49 @@ async fn apply_changes(
         ));
     }
 
+    if let Err(error) = require_current_effective_plan(&stage, &session, &contract) {
+        return Err(rollback_written_change(
+            &data_root,
+            &state,
+            &session_id,
+            &session,
+            &session.original_bytes,
+            &outcome.revision,
+            "post_write_effect_verification_failed",
+            "post_write_effect_rollback_failed",
+            &error.message,
+        ));
+    }
+    let exact_effect_verified = match verify_effective_changes(&stage, &contract, &data_root) {
+        Ok(exact) => exact,
+        Err(error) => {
+            return Err(rollback_written_change(
+                &data_root,
+                &state,
+                &session_id,
+                &session,
+                &session.original_bytes,
+                &outcome.revision,
+                "post_write_effect_verification_failed",
+                "post_write_effect_rollback_failed",
+                &error.message,
+            ));
+        }
+    };
+    if let Err(error) = require_current_effective_plan(&stage, &session, &contract) {
+        return Err(rollback_written_change(
+            &data_root,
+            &state,
+            &session_id,
+            &session,
+            &session.original_bytes,
+            &outcome.revision,
+            "post_write_effect_verification_failed",
+            "post_write_effect_rollback_failed",
+            &error.message,
+        ));
+    }
+
     let committed_revision =
         refresh_session_after_verified_write(&state, &session_id, &session, &outcome.revision)?;
 
@@ -1021,7 +1753,147 @@ async fn apply_changes(
         warnings: outcome.warnings,
         activation: stage.activation,
         reload_required: true,
+        effective_status: if exact_effect_verified {
+            "verified"
+        } else {
+            "resolved"
+        }
+        .to_string(),
     })
+}
+
+fn require_effective_write_plan(effect: &ChangeEffectPreview) -> Result<(), CommandError> {
+    match effect.status.as_str() {
+        "effective" => Ok(()),
+        "overridden" => Err(CommandError::new(
+            "change_would_be_overridden",
+            "a later configuration source would override this change",
+        )),
+        _ => Err(CommandError::new(
+            "effective_source_unverified",
+            "the effective configuration source could not be verified",
+        )),
+    }
+}
+
+fn require_current_effective_plan(
+    stage: &StagedCandidate,
+    session: &OpenSession,
+    contract: &CurrentRuntimeContract,
+) -> Result<(), CommandError> {
+    let default_candidates = discovery::discover_config_candidates();
+    let graph = build_config_graph_for(&default_candidates)?;
+    let candidates = workspace_candidates(&default_candidates, &graph);
+    let dependency_revision = effective_config::dependency_revision(
+        &graph,
+        &default_candidates,
+        &session.path,
+        contract.ghostty_version.as_deref(),
+    );
+    if dependency_revision != stage.dependency_revision {
+        return Err(CommandError::new(
+            "effective_sources_changed",
+            "another configuration source changed after review",
+        ));
+    }
+    let effect = effective_config::preview_change_effect(
+        &graph,
+        &session.path,
+        &stage.changes,
+        &candidates,
+        contract.ghostty_version.as_deref(),
+    );
+    require_effective_write_plan(&effect)
+}
+
+fn verify_effective_changes(
+    stage: &StagedCandidate,
+    contract: &CurrentRuntimeContract,
+    data_root: &Path,
+) -> Result<bool, CommandError> {
+    let output = ghostty::show_effective_config(&contract.executable)?;
+    let document = ConfigDocument::parse(output.as_bytes())?;
+    let effective = document.values();
+    let mut exact = true;
+    for change in &stage.changes {
+        let Some(expected) = change.after.last() else {
+            // Removing a value from one layer intentionally inherits another
+            // source or Ghostty's default. The final configuration was read
+            // successfully, but there is no scalar requested value to compare.
+            exact = false;
+            continue;
+        };
+        let actual = effective
+            .get(&change.key)
+            .and_then(|values| values.last())
+            .ok_or_else(|| {
+                CommandError::new(
+                    "effective_value_mismatch",
+                    "Ghostty did not return the reviewed setting",
+                )
+            })?;
+        let matches = match change.key.as_str() {
+            BACKGROUND_IMAGE_KEY if expected == RESET_BACKGROUND_TOKEN => {
+                unquote_value(actual).is_empty()
+            }
+            BACKGROUND_IMAGE_KEY => {
+                let asset_id = stage.background_asset_id.as_deref().ok_or_else(|| {
+                    CommandError::new(
+                        "effective_value_mismatch",
+                        "the reviewed managed image identity is unavailable",
+                    )
+                })?;
+                let expected_path = background_assets::resolve_asset_path(data_root, asset_id)?;
+                equivalent_existing_paths(&expected_path, Path::new(unquote_value(actual)))
+            }
+            _ => contract
+                .editable_options
+                .get(&change.key)
+                .is_some_and(|option| scalar_values_match(option, expected, actual)),
+        };
+        if !matches {
+            return Err(CommandError::new(
+                "effective_value_mismatch",
+                "Ghostty's final setting does not match the reviewed value",
+            ));
+        }
+    }
+    Ok(exact)
+}
+
+fn scalar_values_match(option: &RuntimeOption, expected: &str, actual: &str) -> bool {
+    let expected = unquote_value(expected).trim();
+    let actual = unquote_value(actual).trim();
+    match option.kind.as_str() {
+        "number" => {
+            let expected = expected.parse::<f64>().ok();
+            let actual = actual.parse::<f64>().ok();
+            matches!((expected, actual), (Some(left), Some(right)) if (left - right).abs() <= 1e-9)
+        }
+        "boolean" => expected.eq_ignore_ascii_case(actual),
+        "color" => expected
+            .strip_prefix('#')
+            .unwrap_or(expected)
+            .eq_ignore_ascii_case(actual.strip_prefix('#').unwrap_or(actual)),
+        _ => expected == actual,
+    }
+}
+
+fn unquote_value(value: &str) -> &str {
+    value
+        .strip_prefix('"')
+        .and_then(|remaining| remaining.strip_suffix('"'))
+        .unwrap_or(value)
+}
+
+fn equivalent_existing_paths(expected: &Path, actual: &Path) -> bool {
+    match (
+        std::fs::canonicalize(expected),
+        std::fs::canonicalize(actual),
+    ) {
+        (Ok(expected), Ok(actual)) => expected == actual,
+        _ => false,
+    }
 }
 
 #[tauri::command]
@@ -1069,42 +1941,31 @@ async fn restore_snapshot(
         &revision,
         &snapshot_id,
     )?;
-    enforce_snapshot_restore_policy(&prepared, &contract.editable_options)?;
-    let key_summary = match locale {
-        UiLocale::ZhCn if prepared.changed_keys.is_empty() => {
-            "仅文本、注释或格式发生变化".to_string()
-        }
-        UiLocale::En if prepared.changed_keys.is_empty() => {
-            "text, comments, or formatting only".to_string()
-        }
-        UiLocale::ZhCn => prepared.changed_keys.join("、"),
-        UiLocale::En => prepared.changed_keys.join(", "),
-    };
+    enforce_snapshot_restore_policy(
+        &prepared,
+        &contract.editable_options,
+        &contract.editable_keys,
+    )?;
     let (message, confirm_label, cancel_label) = match locale {
         UiLocale::ZhCn => (
-            format!(
-                "将恢复版本 {}（{} bytes）。\n\n包含的修改：{}\n\n恢复前会备份当前配置，并确认文件没有被其他程序修改。",
-                &prepared.snapshot.id[..8],
-                prepared.snapshot.size_bytes,
-                key_summary
-            ),
+            "恢复所选版本？\n\n当前配置会先备份。".to_string(),
             "恢复配置".to_string(),
             "取消".to_string(),
         ),
         UiLocale::En => (
-            format!(
-                "Restore version {} ({} bytes).\n\nChanges: {}\n\nThe current configuration will be backed up first, and Studio will confirm that no other program changed the file.",
-                &prepared.snapshot.id[..8],
-                prepared.snapshot.size_bytes,
-                key_summary
-            ),
+            "Restore the selected version?\n\nThe current configuration will be backed up first."
+                .to_string(),
             "Restore configuration".to_string(),
             "Cancel".to_string(),
         ),
     };
     require_native_confirmation(&app, message, confirm_label, cancel_label).await?;
     let contract = current_runtime_contract(&state)?;
-    enforce_snapshot_restore_policy(&prepared, &contract.editable_options)?;
+    enforce_snapshot_restore_policy(
+        &prepared,
+        &contract.editable_options,
+        &contract.editable_keys,
+    )?;
     let current_validation = safe_write::validate_candidate(
         &contract.executable,
         &session.path,
@@ -1248,11 +2109,12 @@ fn prepare_snapshot_restore(
 fn enforce_snapshot_restore_policy(
     prepared: &PreparedSnapshotRestore,
     options: &HashMap<String, RuntimeOption>,
+    editable_keys: &HashSet<String>,
 ) -> Result<(), CommandError> {
     let blocked_count = prepared
         .changed_keys
         .iter()
-        .filter(|key| !options.contains_key(*key))
+        .filter(|key| !options.contains_key(*key) && !editable_keys.contains(*key))
         .count();
     if blocked_count > 0 {
         return Err(CommandError::new(
@@ -1267,6 +2129,29 @@ fn enforce_snapshot_restore_policy(
     let restored_document = ConfigDocument::parse(&prepared.restored_bytes)?;
     let restored_values = restored_document.values();
     for key in &prepared.changed_keys {
+        if key == BACKGROUND_IMAGE_KEY && editable_keys.contains(key) {
+            if current_document.duplicate_count(key) > 1
+                || restored_document.duplicate_count(key) > 1
+            {
+                return Err(CommandError::new(
+                    "snapshot_requires_specialized_restore",
+                    "这个快照涉及多处重复背景图片设置，需要先在配置文件中确认来源。",
+                ));
+            }
+            if let Some(values) = restored_values.get(key) {
+                if values.len() > 1
+                    || values
+                        .iter()
+                        .any(|value| value.len() > 4096 || value.chars().any(char::is_control))
+                {
+                    return Err(CommandError::new(
+                        "snapshot_setting_invalid",
+                        "快照中的背景图片路径不符合当前安全规则。",
+                    ));
+                }
+            }
+            continue;
+        }
         let option = options.get(key).ok_or_else(|| {
             CommandError::new(
                 "snapshot_requires_specialized_restore",
@@ -1365,6 +2250,7 @@ fn apply_prepared_snapshot_restore(
         warnings: outcome.warnings,
         activation,
         reload_required: true,
+        effective_status: "unverified".to_string(),
     })
 }
 
@@ -1663,6 +2549,7 @@ fn editable_scalar_keys(state: &AppState) -> Result<HashSet<String>, CommandErro
 
 fn current_runtime_contract(state: &AppState) -> Result<CurrentRuntimeContract, CommandError> {
     let probe = ghostty::probe();
+    let ghostty_version = probe.version.clone();
     let executable = probe.executable_path.map(PathBuf::from).ok_or_else(|| {
         CommandError::new(
             "ghostty_unavailable",
@@ -1674,6 +2561,7 @@ fn current_runtime_contract(state: &AppState) -> Result<CurrentRuntimeContract, 
     let (editable_keys, changed_writable_keys) = reconcile_runtime_schema(state, fresh_schema)?;
     Ok(CurrentRuntimeContract {
         executable,
+        ghostty_version,
         editable_keys,
         editable_options,
         changed_writable_keys,
@@ -1684,7 +2572,11 @@ fn reconcile_runtime_schema(
     state: &AppState,
     fresh_schema: RuntimeSchema,
 ) -> Result<(HashSet<String>, HashSet<String>), CommandError> {
-    let editable_keys = editable_keys_from_schema(&fresh_schema);
+    let fresh_background_image = background_image_editor_supported(&fresh_schema);
+    let mut editable_keys = editable_keys_from_schema(&fresh_schema);
+    if fresh_background_image {
+        editable_keys.insert(BACKGROUND_IMAGE_KEY.to_string());
+    }
     let mut cached_schema = state
         .runtime_schema
         .lock()
@@ -1697,12 +2589,16 @@ fn reconcile_runtime_schema(
     })?;
     let cached_options = editable_options_from_schema(cached);
     let fresh_options = editable_options_from_schema(&fresh_schema);
-    let changed_writable_keys = cached_options
+    let cached_background_image = background_image_editor_supported(cached);
+    let mut changed_writable_keys = cached_options
         .keys()
         .chain(fresh_options.keys())
         .filter(|key| cached_options.get(*key) != fresh_options.get(*key))
         .cloned()
         .collect::<HashSet<_>>();
+    if cached_background_image != fresh_background_image {
+        changed_writable_keys.insert(BACKGROUND_IMAGE_KEY.to_string());
+    }
     *cached_schema = Some(fresh_schema);
     drop(cached_schema);
     if !changed_writable_keys.is_empty() {
@@ -1724,6 +2620,18 @@ fn reconcile_runtime_schema(
         ));
     }
     Ok((editable_keys, changed_writable_keys))
+}
+
+fn background_image_editor_supported(schema: &RuntimeSchema) -> bool {
+    schema.options.iter().any(|option| {
+        option.key == BACKGROUND_IMAGE_KEY
+            && option.kind == "text"
+            && !option.repeatable
+            && option.risk == "normal"
+            && option.capability.edit_mode == "none"
+            && option.capability.reason.as_deref() == Some("needs-editor")
+            && option.capability.activation == "reload"
+    })
 }
 
 fn require_unchanged_review_contract(
@@ -1892,11 +2800,20 @@ fn acquire_mutation(state: &AppState) -> Result<MutationGuard<'_>, CommandError>
     Ok(MutationGuard(&state.mutation_in_flight))
 }
 
+fn lock_asset_store(state: &AppState) -> Result<MutexGuard<'_, ()>, CommandError> {
+    state.asset_store.lock().map_err(|_| {
+        CommandError::new(
+            "background_store_unavailable",
+            "the private background image store is unavailable",
+        )
+    })
+}
+
 fn app_data_root(app: &tauri::AppHandle) -> Result<PathBuf, CommandError> {
     app.path().app_data_dir().map_err(|error| {
         CommandError::new(
             "app_data_unavailable",
-            format!("cannot resolve the private snapshot directory: {error}"),
+            format!("cannot resolve the private application data directory: {error}"),
         )
     })
 }
@@ -1972,12 +2889,45 @@ fn render_setting_diff(changes: &[DraftChange]) -> String {
         .iter()
         .flat_map(|change| {
             [
-                format!("-{} = {}", change.key, change.before.join(", ")),
-                format!("+{} = {}", change.key, change.after.join(", ")),
+                format!(
+                    "-{} = {}",
+                    change.key,
+                    public_diff_values(&change.key, &change.before)
+                ),
+                format!(
+                    "+{} = {}",
+                    change.key,
+                    public_diff_values(&change.key, &change.after)
+                ),
             ]
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn public_diff_values(key: &str, values: &[String]) -> String {
+    if key != BACKGROUND_IMAGE_KEY {
+        return values.join(", ");
+    }
+    match values.last().map(String::as_str) {
+        None | Some("") => "[not set]".to_string(),
+        Some(RESET_BACKGROUND_TOKEN) => "[reset to default]".to_string(),
+        Some(EXTERNAL_BACKGROUND_TOKEN) => "[external image path hidden]".to_string(),
+        Some(value) if value.starts_with(MANAGED_BACKGROUND_PREFIX) => {
+            "[managed image]".to_string()
+        }
+        Some(_) => "[image value hidden]".to_string(),
+    }
+}
+
+fn public_background_values(state: models::BackgroundImageState) -> Vec<String> {
+    match (state.kind.as_str(), state.asset_id) {
+        ("managed", Some(asset_id)) => {
+            vec![format!("{MANAGED_BACKGROUND_PREFIX}{asset_id}")]
+        }
+        ("external", _) => vec![EXTERNAL_BACKGROUND_TOKEN.to_string()],
+        _ => Vec::new(),
+    }
 }
 
 pub fn run() {
@@ -2008,6 +2958,10 @@ pub fn run() {
             load_runtime_schema,
             inspect_extension_manifest,
             load_config_graph,
+            list_background_assets,
+            choose_background_images,
+            get_background_asset_preview,
+            delete_background_asset,
             open_config,
             create_config,
             stage_changes,
@@ -2077,6 +3031,29 @@ mod tests {
             editable: true,
             capability: test_capability("control", None, Some(1.0), Some(255.0)),
         }
+    }
+
+    #[test]
+    fn final_value_comparison_normalizes_audited_scalar_kinds() {
+        let number = test_runtime_option("font-size");
+        assert!(scalar_values_match(&number, "14", "14.0"));
+
+        let mut boolean = test_runtime_option("background-image-repeat");
+        boolean.kind = "boolean".to_string();
+        assert!(scalar_values_match(&boolean, "true", "TRUE"));
+
+        let mut color = test_runtime_option("background");
+        color.kind = "color".to_string();
+        assert!(scalar_values_match(&color, "#Aa00Ff", "aa00ff"));
+
+        let mut text = test_runtime_option("font-family");
+        text.kind = "text".to_string();
+        assert!(scalar_values_match(
+            &text,
+            "JetBrains Mono",
+            "\"JetBrains Mono\""
+        ));
+        assert!(!scalar_values_match(&text, "JetBrains Mono", "Menlo"));
     }
 
     #[test]
@@ -2361,7 +3338,7 @@ mod tests {
         let target = directory.path().join("config");
         fs::write(
             &target,
-            b"font-size = 14\n/Users/private/token = should-not-cross-ipc\n",
+            b"font-size = 14\nbackground-image = /Users/private/wallpaper.png\n/Users/private/token = should-not-cross-ipc\n",
         )
         .unwrap();
 
@@ -2370,7 +3347,24 @@ mod tests {
             ghostty_version: Some("test".to_string()),
             schema_hash: "test".to_string(),
             diagnostics: Vec::new(),
-            options: vec![test_runtime_option("font-size")],
+            options: vec![
+                test_runtime_option("font-size"),
+                models::RuntimeOption {
+                    key: BACKGROUND_IMAGE_KEY.to_string(),
+                    description: String::new(),
+                    default_values: Vec::new(),
+                    current_values: Vec::new(),
+                    category: "appearance".to_string(),
+                    kind: "text".to_string(),
+                    choices: Vec::new(),
+                    repeatable: false,
+                    platform: None,
+                    since: None,
+                    risk: "normal".to_string(),
+                    editable: true,
+                    capability: test_capability("control", None, None, None),
+                },
+            ],
         });
         state.candidates.lock().unwrap().insert(
             "candidate".to_string(),
@@ -2388,13 +3382,21 @@ mod tests {
             },
         );
 
-        let session = open_config_session("candidate", &state).unwrap();
+        let session = open_config_session("candidate", directory.path(), &state).unwrap();
         assert_eq!(session.unrecognized_setting_count, 1);
-        assert_eq!(session.configured_settings.len(), 1);
-        assert_eq!(session.configured_settings[0].key, "font-size");
+        assert_eq!(session.configured_settings.len(), 2);
+        assert!(session
+            .configured_settings
+            .iter()
+            .any(|setting| setting.key == "font-size" && setting.value_exposure == "available"));
+        assert!(session.configured_settings.iter().any(|setting| {
+            setting.key == BACKGROUND_IMAGE_KEY && setting.value_exposure == "protected"
+        }));
+        assert!(!session.values.contains_key(BACKGROUND_IMAGE_KEY));
         let serialized = serde_json::to_string(&session).unwrap();
         assert!(!serialized.contains("/Users/private/token"));
         assert!(!serialized.contains("should-not-cross-ipc"));
+        assert!(!serialized.contains("/Users/private/wallpaper.png"));
     }
 
     #[test]
@@ -2501,15 +3503,21 @@ mod tests {
 
         let options =
             editable_options_from_schema(state.runtime_schema.lock().unwrap().as_ref().unwrap());
+        let editable_keys = options.keys().cloned().collect::<HashSet<_>>();
         assert!(enforce_snapshot_restore_policy(
             &prepared(vec!["font-size".to_string()]),
-            &options
+            &options,
+            &editable_keys,
         )
         .is_ok());
         assert_eq!(
-            enforce_snapshot_restore_policy(&prepared(vec!["command".to_string()]), &options)
-                .unwrap_err()
-                .code,
+            enforce_snapshot_restore_policy(
+                &prepared(vec!["command".to_string()]),
+                &options,
+                &editable_keys,
+            )
+            .unwrap_err()
+            .code,
             "snapshot_requires_specialized_restore"
         );
 
@@ -2518,7 +3526,7 @@ mod tests {
             ..prepared(vec!["font-size".to_string()])
         };
         assert_eq!(
-            enforce_snapshot_restore_policy(&invalid_value, &options)
+            enforce_snapshot_restore_policy(&invalid_value, &options, &editable_keys)
                 .unwrap_err()
                 .code,
             "snapshot_setting_invalid"
@@ -2529,10 +3537,57 @@ mod tests {
             ..prepared(vec!["font-size".to_string()])
         };
         assert_eq!(
-            enforce_snapshot_restore_policy(&duplicated, &options)
+            enforce_snapshot_restore_policy(&duplicated, &options, &editable_keys)
                 .unwrap_err()
                 .code,
             "snapshot_requires_specialized_restore"
+        );
+    }
+
+    #[test]
+    fn background_image_reviews_and_diffs_never_expose_paths_or_asset_ids() {
+        let asset_id = "a".repeat(64);
+        let changes = vec![DraftChange {
+            key: BACKGROUND_IMAGE_KEY.to_string(),
+            before: vec![EXTERNAL_BACKGROUND_TOKEN.to_string()],
+            after: vec![format!("{MANAGED_BACKGROUND_PREFIX}{asset_id}")],
+        }];
+        let diff = render_setting_diff(&changes);
+        assert!(diff.contains("[external image path hidden]"));
+        assert!(diff.contains("[managed image]"));
+        assert!(!diff.contains(&asset_id));
+        assert!(!diff.contains("/Users/"));
+
+        let reset_diff = render_setting_diff(&[DraftChange {
+            key: BACKGROUND_IMAGE_KEY.to_string(),
+            before: vec![format!("{MANAGED_BACKGROUND_PREFIX}{asset_id}")],
+            after: vec![RESET_BACKGROUND_TOKEN.to_string()],
+        }]);
+        assert!(reset_diff.contains("[reset to default]"));
+        assert!(!reset_diff.contains(RESET_BACKGROUND_TOKEN));
+        assert!(!reset_diff.contains(&asset_id));
+    }
+
+    #[test]
+    fn target_bound_snapshot_may_restore_an_external_background_path() {
+        let prepared = PreparedSnapshotRestore {
+            current_bytes: b"background-image = /private/current.png\n".to_vec(),
+            restored_bytes: b"background-image = /Volumes/Photos/old image.jpg\n".to_vec(),
+            validation: ghostty::ValidationReport {
+                valid: true,
+                diagnostics: Vec::new(),
+            },
+            snapshot: safe_write::SnapshotInfo {
+                id: Uuid::new_v4().to_string(),
+                created_at_ms: 1,
+                revision: "0".repeat(64),
+                size_bytes: 52,
+            },
+            changed_keys: vec![BACKGROUND_IMAGE_KEY.to_string()],
+        };
+        let editable_keys = HashSet::from([BACKGROUND_IMAGE_KEY.to_string()]);
+        assert!(
+            enforce_snapshot_restore_policy(&prepared, &HashMap::new(), &editable_keys,).is_ok()
         );
     }
 
@@ -2567,8 +3622,125 @@ mod tests {
                 diagnostics: Vec::new(),
                 valid: true,
                 activation: "reload".to_string(),
+                background_asset_id: None,
+                effect: ChangeEffectPreview {
+                    status: "effective".to_string(),
+                    affected_keys: Vec::new(),
+                    suggested_candidate_id: None,
+                    suggested_label: None,
+                },
+                dependency_revision: "test".to_string(),
             },
         );
+    }
+
+    #[test]
+    fn removing_a_library_image_invalidates_stale_background_reviews() {
+        let state = AppState::default();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("background.png");
+        fs::write(&path, b"image").unwrap();
+        let staged_bytes = format!("background-image = {}\n", path.display()).into_bytes();
+        state.stages.lock().unwrap().insert(
+            Uuid::new_v4().to_string(),
+            StagedCandidate {
+                session_id: Uuid::new_v4().to_string(),
+                revision: "0".repeat(64),
+                bytes: staged_bytes,
+                changes: Vec::new(),
+                diagnostics: Vec::new(),
+                valid: true,
+                activation: "reload".to_string(),
+                background_asset_id: Some("a".repeat(64)),
+                effect: ChangeEffectPreview {
+                    status: "effective".to_string(),
+                    affected_keys: Vec::new(),
+                    suggested_candidate_id: None,
+                    suggested_label: None,
+                },
+                dependency_revision: "test".to_string(),
+            },
+        );
+
+        invalidate_background_stages(&path, &state).unwrap();
+        assert!(state.stages.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn background_reference_checks_resolve_relative_and_quoted_values_from_their_source() {
+        let directory = tempfile::tempdir().unwrap();
+        let config_directory = directory.path().join("ghostty");
+        let image_directory = config_directory.join("images");
+        fs::create_dir_all(&image_directory).unwrap();
+        let source_config = config_directory.join("background.conf");
+        let image = image_directory.join("night sky.png");
+        fs::write(&image, b"image").unwrap();
+
+        let relative =
+            ConfigDocument::parse(b"background-image = \"images/night sky.png\"\n").unwrap();
+        assert!(document_references_background_path(
+            &relative,
+            Some(&source_config),
+            &image,
+        ));
+
+        let absolute = ConfigDocument::parse(
+            format!("background-image = \"{}\"\n", image.display()).as_bytes(),
+        )
+        .unwrap();
+        assert!(document_references_background_path(&absolute, None, &image,));
+    }
+
+    #[test]
+    fn usage_index_keeps_overridden_references_and_returns_safe_source_labels() {
+        let directory = tempfile::tempdir().unwrap();
+        let xdg_directory = directory.path().join("xdg/ghostty");
+        let macos_directory = directory.path().join("Library/Application Support/ghostty");
+        fs::create_dir_all(&xdg_directory).unwrap();
+        fs::create_dir_all(&macos_directory).unwrap();
+        let managed = directory.path().join("managed.png");
+        fs::write(&managed, b"managed image").unwrap();
+        let xdg = xdg_directory.join("config");
+        let include = xdg_directory.join("background.conf");
+        let macos = macos_directory.join("config");
+        fs::write(&xdg, b"config-file = background.conf\n").unwrap();
+        fs::write(&include, b"background-image = external.jpg\n").unwrap();
+        fs::write(
+            &macos,
+            format!("background-image = {}\n", managed.display()).as_bytes(),
+        )
+        .unwrap();
+        let candidate =
+            |id: &str, label: &str, path: &Path, source: &str, priority| ConfigCandidate {
+                id: id.to_string(),
+                label: label.to_string(),
+                path: path.to_string_lossy().to_string(),
+                source: source.to_string(),
+                format: "legacy".to_string(),
+                priority,
+                exists: true,
+                writable: true,
+                symlink: false,
+                size_bytes: fs::metadata(path).ok().map(|metadata| metadata.len()),
+            };
+        let candidates = vec![
+            candidate("xdg", "XDG · config", &xdg, "xdg", 0),
+            candidate("macos", "macOS · config", &macos, "macos", 2),
+        ];
+
+        let references = loaded_background_references_for(&candidates).unwrap();
+        let managed_identity = fs::canonicalize(&managed).unwrap();
+        let managed_references = references.get(&managed_identity).unwrap();
+        assert_eq!(managed_references.len(), 1);
+        assert_eq!(managed_references[0].candidate_id.as_deref(), Some("macos"));
+        assert_eq!(
+            managed_references[0].source_label.as_deref(),
+            Some("macOS · config")
+        );
+        assert!(managed_references[0].writable);
+        assert!(!serde_json::to_string(managed_references)
+            .unwrap()
+            .contains(directory.path().to_string_lossy().as_ref()));
     }
 
     #[test]

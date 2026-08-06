@@ -3,6 +3,12 @@ import { useI18n, type AppLocale } from "../i18n";
 import { copyForSetting } from "../settingCopy";
 import type { ChangePreview, DraftChange } from "../types";
 import { localizedSettingChoice } from "../settingChoices";
+import {
+  assetIdFromBackgroundValue,
+  EXTERNAL_BACKGROUND_TOKEN,
+  RESET_BACKGROUND_TOKEN,
+} from "../backgroundImageModel";
+import { hasSourceBoundRemoval } from "../draftMigration";
 import { useDialogFocus } from "./useDialogFocus";
 
 interface ReviewPanelProps {
@@ -10,14 +16,17 @@ interface ReviewPanelProps {
   preview: ChangePreview | null;
   loading: boolean;
   applying?: boolean;
+  busy?: boolean;
   canRecover?: boolean;
   readOnly: boolean;
   targetLabel?: string;
   previewOnly?: boolean;
+  backgroundAssetNames?: Record<string, string>;
   onClose(): void;
   onApply(): void;
   onRetry?(): void;
   onRecover?(): void;
+  onUseSuggestedSource?(candidateId: string): void;
 }
 
 function readableValue(
@@ -25,15 +34,30 @@ function readableValue(
   key: string,
   values: string[],
   emptyLabel: string,
+  backgroundAssetNames: Record<string, string>,
 ): string {
   const value = values.at(-1);
   if (value == null || value === "") return emptyLabel;
+  if (key === "background-image") {
+    if (value === RESET_BACKGROUND_TOKEN) {
+      return locale === "zh-CN" ? "关闭背景图片" : "Turn off background image";
+    }
+    if (value === EXTERNAL_BACKGROUND_TOKEN) {
+      return locale === "zh-CN" ? "外部图片（路径已隐藏）" : "External image (path hidden)";
+    }
+    const assetId = assetIdFromBackgroundValue(value);
+    if (assetId) {
+      return backgroundAssetNames[assetId]
+        ?? (locale === "zh-CN" ? "图片库中的图片" : "Image from the library");
+    }
+    return locale === "zh-CN" ? "图片值已隐藏" : "Image value hidden";
+  }
   if (value === "true" || value === "false") {
     return localizedSettingChoice(locale, key, value);
   }
   const localizedChoice = localizedSettingChoice(locale, key, value);
   if (localizedChoice !== value) return localizedChoice;
-  if (key === "background-opacity") {
+  if (key === "background-opacity" || key === "background-image-opacity") {
     const opacity = Number(value);
     if (Number.isFinite(opacity)) return `${Math.round(opacity * 100)}%`;
   }
@@ -63,16 +87,13 @@ function activationCopy(locale: AppLocale, activation: ChangePreview["activation
 
 function displayDiagnostic(locale: AppLocale, diagnostic: string): string {
   if (locale === "zh-CN") return diagnostic;
-  if (diagnostic === "已通过当前 Ghostty 二进制验证。") {
-    return "Validated with the installed version of Ghostty.";
+  if (diagnostic === "Ghostty 无法读取这份配置，但未提供具体原因。") {
+    return "Ghostty could not read this configuration and did not provide a specific reason.";
   }
-  if (diagnostic === "Ghostty 拒绝了候选配置，但没有返回可解析的诊断。") {
-    return "Ghostty rejected this configuration without a readable diagnostic.";
-  }
-  const rejected = diagnostic.match(/^Ghostty 拒绝了候选配置（返回 (\d+) 条诊断）/);
-  if (rejected) {
-    const count = Number(rejected[1]);
-    return `Ghostty rejected this configuration. ${count} ${count === 1 ? "diagnostic was" : "diagnostics were"} hidden because they may contain paths or values.`;
+  const issues = diagnostic.match(/^Ghostty 无法读取这份配置（发现 (\d+) 条问题）/);
+  if (issues) {
+    const count = Number(issues[1]);
+    return `Ghostty could not read this configuration (${count} ${count === 1 ? "issue" : "issues"}). Details are hidden to protect paths and values.`;
   }
   return "Ghostty returned a diagnostic that is not available in this language.";
 }
@@ -82,22 +103,27 @@ export function ReviewPanel({
   preview,
   loading,
   applying = false,
+  busy = false,
   canRecover = false,
   readOnly,
   targetLabel,
   previewOnly = false,
+  backgroundAssetNames = {},
   onClose,
   onApply,
   onRetry,
   onRecover,
+  onUseSuggestedSource,
 }: ReviewPanelProps) {
   const { locale, text } = useI18n();
-  const dialogRef = useDialogFocus(onClose, applying);
+  const interactionBlocked = applying || busy;
+  const dialogRef = useDialogFocus(onClose, interactionBlocked);
   const reviewedChanges = preview?.changes ?? changes;
   const checkingFailed = !loading && !applying && !preview;
+  const containsSourceBoundRemoval = hasSourceBoundRemoval(reviewedChanges);
 
   const closeUnlessApplying = () => {
-    if (!applying) onClose();
+    if (!interactionBlocked) onClose();
   };
 
   return (
@@ -108,8 +134,7 @@ export function ReviewPanel({
         role="dialog"
         aria-modal="true"
         aria-labelledby="review-title"
-        aria-describedby={previewOnly ? undefined : "review-safety-summary"}
-        aria-busy={loading || applying}
+        aria-busy={loading || interactionBlocked}
         tabIndex={-1}
         onMouseDown={(event) => event.stopPropagation()}
       >
@@ -135,7 +160,7 @@ export function ReviewPanel({
             type="button"
             onClick={onClose}
             aria-label={text("关闭更改审阅", "Close change review")}
-            disabled={applying}
+            disabled={interactionBlocked}
           >
             <X size={18} />
           </button>
@@ -170,13 +195,52 @@ export function ReviewPanel({
                 <strong>
                   {previewOnly
                     ? text("更改已准备好", "Changes are ready")
-                    : text("Ghostty 可以读取这份配置", "Ghostty can read this configuration")}
+                    : text("检查通过", "Checks passed")}
                 </strong>
                 {!previewOnly && (
                   <small>
                     {activationCopy(locale, preview.activation)} {text("保存前会创建恢复点。", "A restore point will be created first.")}
                   </small>
                 )}
+              </div>
+            </div>
+          )}
+
+          {!loading && preview?.valid && preview.effect.status === "overridden" && (
+            <div className="review-effect review-effect--warning" role="status">
+              <AlertTriangle size={15} />
+              <div>
+                <strong>{text(
+                  "当前保存位置会被后续配置覆盖",
+                  "A later configuration source will override this save destination",
+                )}</strong>
+                <span>{containsSourceBoundRemoval
+                  ? text(
+                      "此草稿包含仅针对当前文件的删除操作。请打开 {source} 后重新修改。",
+                      "This draft includes a removal tied to the current file. Open {source} and make the change there.",
+                      { source: preview.effect.suggestedLabel ?? text("最终来源", "the effective source") },
+                    )
+                  : text(
+                      "{count} 项修改不会进入 Ghostty 的最终配置。",
+                      "{count} {noun} will not reach Ghostty's effective configuration.",
+                      {
+                        count: preview.effect.affectedKeys.length,
+                        noun: preview.effect.affectedKeys.length === 1 ? "change" : "changes",
+                      },
+                    )}</span>
+              </div>
+            </div>
+          )}
+
+          {!loading && preview?.valid && preview.effect.status === "unverified" && (
+            <div className="review-effect review-effect--warning" role="status">
+              <AlertTriangle size={15} />
+              <div>
+                <strong>{text("无法确认最终生效来源", "The effective source could not be verified")}</strong>
+                <span>{text(
+                  "无法确认哪份配置最终生效，暂时不能保存。",
+                  "The effective configuration could not be identified, so saving is unavailable.",
+                )}</span>
               </div>
             </div>
           )}
@@ -192,7 +256,7 @@ export function ReviewPanel({
                       {copy.label !== change.key && <code>{change.key}</code>}
                     </div>
                     <div className="review-change__values">
-                      <span>{readableValue(locale, change.key, change.before, text("未设置", "Not set"))}</span>
+                      <span>{readableValue(locale, change.key, change.before, text("未设置", "Not set"), backgroundAssetNames)}</span>
                       <ArrowRight size={14} />
                       <strong>
                         {readableValue(
@@ -200,6 +264,7 @@ export function ReviewPanel({
                           change.key,
                           change.after,
                           text("从当前文件移除", "Remove from this file"),
+                          backgroundAssetNames,
                         )}
                       </strong>
                     </div>
@@ -209,12 +274,14 @@ export function ReviewPanel({
             </div>
           )}
 
-          {!loading && preview?.diagnostics.map((diagnostic) => (
-            <div className="diagnostic" role={preview.valid ? "status" : "alert"} key={diagnostic}>
-              {preview.valid ? <Check size={15} /> : <AlertTriangle size={15} />}
-              <span>{displayDiagnostic(locale, diagnostic)}</span>
-            </div>
-          ))}
+          {!loading && preview?.diagnostics
+            .filter((diagnostic) => !(preview.valid && diagnostic === "已通过当前 Ghostty 二进制验证。"))
+            .map((diagnostic) => (
+              <div className="diagnostic" role={preview.valid ? "status" : "alert"} key={diagnostic}>
+                {preview.valid ? <Check size={15} /> : <AlertTriangle size={15} />}
+                <span>{displayDiagnostic(locale, diagnostic)}</span>
+              </div>
+            ))}
 
           {!loading && preview?.unifiedDiff && (
             <details className="raw-diff">
@@ -223,14 +290,6 @@ export function ReviewPanel({
             </details>
           )}
 
-          {!previewOnly && (
-            <p className="review-safety-copy" id="review-safety-summary">
-              {text(
-                "保存前会再次确认文件没有被其他应用修改。",
-                "Before saving, Studio will confirm that no other app has changed the file.",
-              )}
-            </p>
-          )}
         </div>
 
         <footer className="review-footer">
@@ -243,25 +302,44 @@ export function ReviewPanel({
             type="button"
             className="button button--secondary"
             onClick={onClose}
-            disabled={applying}
+            disabled={interactionBlocked}
           >
             {previewOnly ? text("返回编辑", "Back to editing") : text("继续编辑", "Keep editing")}
           </button>
           {!loading && !applying && !preview?.valid && canRecover && onRecover && (
-            <button type="button" className="button button--secondary" onClick={onRecover}>
+            <button type="button" className="button button--secondary" onClick={onRecover} disabled={interactionBlocked}>
               {text("重新读取并保留草稿", "Reload and keep draft")}
             </button>
           )}
           {!loading && !applying && !preview?.valid && (!canRecover || !onRecover) && onRetry && (
-            <button type="button" className="button button--secondary" onClick={onRetry}>
+            <button type="button" className="button button--secondary" onClick={onRetry} disabled={interactionBlocked}>
               {text("重新检查", "Check again")}
+            </button>
+          )}
+          {!previewOnly && (
+            preview?.effect.status === "overridden"
+              && preview.effect.suggestedCandidateId
+              && onUseSuggestedSource
+              && !containsSourceBoundRemoval
+          ) && (
+            <button
+              type="button"
+              className="button button--primary"
+              disabled={loading || interactionBlocked}
+              onClick={() => onUseSuggestedSource(preview.effect.suggestedCandidateId!)}
+            >
+              {text(
+                "改存到 {source}",
+                "Save to {source}",
+                { source: preview.effect.suggestedLabel ?? text("生效来源", "effective source") },
+              )}
             </button>
           )}
           {!previewOnly && (
             <button
               type="button"
               className="button button--primary"
-              disabled={readOnly || loading || applying || !preview?.valid}
+              disabled={readOnly || loading || interactionBlocked || !preview?.valid || preview.effect.status !== "effective"}
               onClick={onApply}
             >
               {applying ? text("正在保存…", "Saving…") : text("保存", "Save")}

@@ -18,6 +18,7 @@ interface SnapshotHistoryPanelProps {
   error: string | null;
   success: string | null;
   readOnly: boolean;
+  busy?: boolean;
   pendingChanges: number;
   restoringId: string | null;
   onClose(): void;
@@ -32,10 +33,6 @@ function formatBytes(locale: AppLocale, bytes: number): string {
   if (bytes < 1024) return `${format(bytes)} B`;
   if (bytes < 1024 * 1024) return `${format(bytes / 1024)} KB`;
   return `${format(bytes / (1024 * 1024))} MB`;
-}
-
-function shortId(value: string): string {
-  return value.length > 12 ? value.slice(0, 12) : value;
 }
 
 function formatSnapshotDate(
@@ -55,6 +52,7 @@ export function SnapshotHistoryPanel({
   error,
   success,
   readOnly,
+  busy = false,
   pendingChanges,
   restoringId,
   onClose,
@@ -71,7 +69,7 @@ export function SnapshotHistoryPanel({
   }), [locale]);
 
   const confirmRestore = async () => {
-    if (!pendingSnapshot || readOnly || restoring) return;
+    if (!pendingSnapshot || readOnly || restoring || busy) return;
     const restored = await onRestore(pendingSnapshot);
     if (restored) setPendingSnapshot(null);
   };
@@ -95,13 +93,12 @@ export function SnapshotHistoryPanel({
       >
         <header className="review-header">
           <div>
-            <span className="eyebrow"><History size={14} /> {text("恢复配置", "Restore configuration")}</span>
             <h2 id="history-title">{text("恢复点", "Restore points")}</h2>
           </div>
           <button
             className="icon-button"
             type="button"
-            disabled={restoring}
+            disabled={restoring || busy}
             onClick={onClose}
             aria-label={text("关闭恢复点", "Close restore points")}
           >
@@ -136,21 +133,9 @@ export function SnapshotHistoryPanel({
             <div className="history-message history-message--error" role="alert">
               <AlertTriangle size={16} />
               <span>{error}</span>
-              <button type="button" onClick={onRetry} disabled={restoring}>{text("重试", "Try again")}</button>
+              <button type="button" onClick={onRetry} disabled={restoring || busy}>{text("重试", "Try again")}</button>
             </div>
           )}
-
-          <div className="history-summary">
-            <div>
-              <strong>{snapshots.length}</strong>
-              <span>
-                {readOnly
-                  ? text("个恢复点", snapshots.length === 1 ? "Restore point" : "Restore points")
-                  : text("个可用恢复点", snapshots.length === 1 ? "Restore point available" : "Restore points available")}
-              </span>
-            </div>
-            <p>{text("按创建时间从新到旧排列。", "Newest first.")}</p>
-          </div>
 
           {loading ? (
             <div className="loading-card">{text("正在读取恢复点…", "Loading restore points…")}</div>
@@ -172,13 +157,12 @@ export function SnapshotHistoryPanel({
                       <div className="snapshot-copy">
                         <strong>{formatSnapshotDate(locale, dateFormatter, snapshot.createdAtMs)}</strong>
                         <span>{formatBytes(locale, snapshot.sizeBytes)}</span>
-                        <small title={snapshot.id}>{text("恢复点", "Restore point")} {shortId(snapshot.id)}</small>
                       </div>
                       {!readOnly && (
                         <button
                           type="button"
                           className="button button--secondary snapshot-restore-button"
-                          disabled={restoring}
+                          disabled={restoring || busy}
                           onClick={() => setPendingSnapshot(snapshot)}
                         >
                           <RotateCcw size={13} />
@@ -211,7 +195,7 @@ export function SnapshotHistoryPanel({
                           <button
                             type="button"
                             className="button button--secondary"
-                            disabled={restoring}
+                            disabled={restoring || busy}
                             onClick={() => setPendingSnapshot(null)}
                           >
                             {text("取消", "Cancel")}
@@ -219,7 +203,7 @@ export function SnapshotHistoryPanel({
                           <button
                             type="button"
                             className="button button--danger"
-                            disabled={restoring}
+                            disabled={restoring || busy}
                             onClick={confirmRestore}
                           >
                             {isRestoring ? text("正在恢复…", "Restoring…") : text("确认恢复", "Restore")}
@@ -235,15 +219,7 @@ export function SnapshotHistoryPanel({
         </div>
 
         <footer className="review-footer">
-          {!readOnly && (
-            <span className="readonly-note">
-              {text(
-                "恢复前会检查配置，并保留当前版本。",
-                "Studio will check the configuration and preserve the current version before restoring.",
-              )}
-            </span>
-          )}
-          <button type="button" className="button button--secondary" disabled={restoring} onClick={onClose}>
+          <button type="button" className="button button--secondary" disabled={restoring || busy} onClick={onClose}>
             {text("完成", "Done")}
           </button>
         </footer>

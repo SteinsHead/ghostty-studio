@@ -1,7 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import { demoEnvironment, demoSchema, demoSnapshots } from "./demo";
+import { isBackgroundSetting } from "./backgroundImageModel";
 import type {
   Backend,
+  BackgroundAssetImportResult,
+  BackgroundAssetPreview,
+  BackgroundAssetSummary,
   ApplyResult,
   ChangePreview,
   ConfigGraph,
@@ -67,6 +71,22 @@ class TauriBackend implements Backend {
   ): Promise<ApplyResult> {
     return invoke("restore_snapshot", { sessionId, revision, snapshotId, locale });
   }
+
+  listBackgroundAssets(): Promise<BackgroundAssetSummary[]> {
+    return invoke("list_background_assets");
+  }
+
+  chooseBackgroundImages(): Promise<BackgroundAssetImportResult> {
+    return invoke("choose_background_images");
+  }
+
+  getBackgroundAssetPreview(assetId: string): Promise<BackgroundAssetPreview> {
+    return invoke("get_background_asset_preview", { assetId });
+  }
+
+  deleteBackgroundAsset(assetId: string, locale: "zh-CN" | "en" = "en"): Promise<void> {
+    return invoke("delete_background_asset", { assetId, locale });
+  }
 }
 
 class BrowserDemoBackend implements Backend {
@@ -80,6 +100,7 @@ class BrowserDemoBackend implements Backend {
 
   async loadConfigGraph(): Promise<ConfigGraph> {
     return {
+      graphRevision: "demo-graph",
       complete: true,
       semanticsKnown: false,
       nodes: [
@@ -166,24 +187,30 @@ class BrowserDemoBackend implements Backend {
   async openConfig(candidateId: string): Promise<ConfigSession> {
     const candidate = demoEnvironment.candidates.find((item) => item.id === candidateId);
     if (!candidate) throw new Error("Unknown demo config candidate");
+    const values = Object.fromEntries(
+      demoSchema.options
+        .filter((option) => option.editable)
+        .map((option) => [option.key, option.currentValues]),
+    );
     return {
       id: `demo-${candidateId}`,
       candidateId,
       path: candidate.path,
       revision: "demo-revision",
       readOnly: true,
-      values: Object.fromEntries(
-        demoSchema.options
-          .filter((option) => option.editable)
-          .map((option) => [option.key, option.currentValues]),
-      ),
-      configuredSettings: demoSchema.options.map((option) => ({
+      values,
+      configuredSettings: demoSchema.options.filter((option) => !isBackgroundSetting(option.key)).map((option) => ({
         key: option.key,
         occurrenceCount: Math.max(1, option.currentValues.length),
         valueExposure: option.editable ? "available" : "protected",
       })),
       unrecognizedSettingCount: 0,
       diagnostics: ["浏览器预览模式固定为只读。请运行 Tauri 应用以访问本地文件。"],
+      backgroundImage: { kind: "none", assetId: null },
+      effectiveValuesKnown: true,
+      effectiveValues: structuredClone(values),
+      effectiveBackgroundImage: { kind: "none", assetId: null },
+      settingEffects: {},
     };
   }
 
@@ -222,6 +249,12 @@ class BrowserDemoBackend implements Backend {
       diagnostics: [],
       valid: true,
       activation,
+      effect: {
+        status: "effective",
+        affectedKeys: [],
+        suggestedCandidateId: null,
+        suggestedLabel: null,
+      },
     };
   }
 
@@ -235,6 +268,22 @@ class BrowserDemoBackend implements Backend {
 
   async restoreSnapshot(): Promise<ApplyResult> {
     throw new Error("浏览器演示模式只展示示例快照，禁止恢复本地配置");
+  }
+
+  async listBackgroundAssets(): Promise<BackgroundAssetSummary[]> {
+    return [];
+  }
+
+  async chooseBackgroundImages(): Promise<BackgroundAssetImportResult> {
+    throw new Error("浏览器演示模式不能访问本地图片");
+  }
+
+  async getBackgroundAssetPreview(): Promise<BackgroundAssetPreview> {
+    throw new Error("浏览器演示模式不能访问本地图片");
+  }
+
+  async deleteBackgroundAsset(): Promise<void> {
+    throw new Error("浏览器演示模式不能删除本地图片");
   }
 }
 

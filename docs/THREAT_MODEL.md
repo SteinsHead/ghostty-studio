@@ -7,6 +7,7 @@
   in configuration.
 - Integrity of the Ghostty executable invocation and application updates.
 - The user's filesystem outside explicitly granted configuration targets.
+- Original images and Studio-managed background copies.
 
 ## Trust boundaries
 
@@ -32,6 +33,8 @@
 | Parser data loss | Byte-preserving AST and round-trip fixtures; fuzz/property coverage remains a release gate |
 | Symlink/hardlink surprises | Detect and refuse by default; explicit advanced flow only |
 | Malicious include graph | Depth/node/byte limits, cycle detection, no writes outside granted roots |
+| Stale or shadowed save target | Version-gated root/include/reset ordering, dependency fingerprints around confirmation, blocked writes when the winner is unknown |
+| Theme or merge behavior differs from the source graph | Post-write Ghostty `+show-config` comparison for every written scalar; revision-aware rollback on mismatch |
 | Incomplete graph presented as authoritative | Parse/permission/resource failures force `complete = false`; merge semantics remain explicitly unknown |
 | Malicious theme | Theme installation/execution is disabled in the current slice; future import requires a separate review boundary |
 | Executable plugin attack | No executable plugins in the default model |
@@ -40,6 +43,10 @@
 | Secrets leaked to logs | Structured redaction; no config values in telemetry; telemetry off by default |
 | Snapshot traversal or substitution | Canonical UUID, target/content hashes, bounded no-follow reads, private permissions and retention limit |
 | Config graph path disclosure | Paths and deterministic path-derived ids are remapped to per-response opaque layer labels before IPC |
+| Malicious or oversized local image | Native picker only; regular no-follow read, byte/pixel/decode limits, PNG/JPEG magic and full decode, metadata-stripping re-encode, content-addressed private storage |
+| Image path disclosure or arbitrary WebView file read | The picker and path resolution stay in Rust; IPC exposes only content ids, bounded metadata and generated thumbnails |
+| Image-library memory exhaustion | 64-item/512 MiB library cap, 480 px/2 MiB thumbnails, paged sequential requests, failed-request suppression |
+| Managed image deleted after a new include references it | Rebuild and revision-check the complete live include graph both before and after native deletion confirmation; uncertainty blocks deletion |
 | Denial of service | File/output/time/depth/node/assignment limits and non-blocking special-file reads |
 
 ## Write transaction
@@ -47,7 +54,8 @@
 1. Serialize the state transition, resolve the opaque session, and atomically consume the review token.
 2. Reload and match the installed Ghostty version/schema contract; reject stale revisions/non-audited keys;
    for restore, verify the snapshot and compute a trusted backend diff.
-3. Require a Rust-triggered native system confirmation containing only trusted key/revision/size metadata.
+3. Require a Rust-triggered native system confirmation containing trusted key metadata and the actual
+   write target.
 4. Reload the runtime contract again, revalidate the candidate, then re-read the bounded regular target
    with no-follow semantics and compare revision.
 5. Acquire the private lock and repeat the revision check.
@@ -55,7 +63,8 @@
 7. Store and fsync a permission-restricted snapshot plus integrity metadata.
 8. Repeat the revision check after all expensive I/O and immediately before commit.
 9. Atomically persist the already-flushed sibling temp, fsync the parent, and verify the written hash.
-10. Validate the complete default Ghostty graph; on failure perform revision-aware rollback without overwriting a newer edit.
+10. Validate the complete default Ghostty graph, compare final scalar values through Ghostty's own
+    configuration oracle, and recheck dependency revisions before reporting success.
 
 ## Missing-config creation transaction
 
@@ -76,5 +85,6 @@
 
 - No analytics or crash upload by default.
 - No network permission in the main editing window.
+- Local image import never changes the original file; deleting an item removes only Studio's managed copy after native confirmation.
 - Logs contain option names and error classes, not raw values.
 - Export/sharing is an explicit separate action with a secret-field review.

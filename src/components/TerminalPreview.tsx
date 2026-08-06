@@ -5,6 +5,7 @@ import { compositePreviewBackground } from "../previewColor";
 
 interface TerminalPreviewProps {
   values: Record<string, string>;
+  backgroundImage?: { dataUrl: string; name?: string } | null;
 }
 
 function cssColor(value: string | undefined, fallback: string): string {
@@ -18,7 +19,29 @@ function boundedNumber(value: string | undefined, fallback: number, minimum: num
   return Number.isFinite(parsed) ? Math.min(Math.max(parsed, minimum), maximum) : fallback;
 }
 
-export const TerminalPreview = memo(function TerminalPreview({ values }: TerminalPreviewProps) {
+function backgroundPosition(value: string | undefined): string {
+  const positions: Record<string, string> = {
+    "top-left": "left top",
+    "top-center": "center top",
+    "top-right": "right top",
+    "center-left": "left center",
+    center: "center center",
+    "center-right": "right center",
+    "bottom-left": "left bottom",
+    "bottom-center": "center bottom",
+    "bottom-right": "right bottom",
+  };
+  return positions[value ?? "center"] ?? "center center";
+}
+
+function backgroundSize(value: string | undefined): string {
+  if (value === "cover") return "cover";
+  if (value === "stretch") return "100% 100%";
+  if (value === "none") return "auto";
+  return "contain";
+}
+
+export const TerminalPreview = memo(function TerminalPreview({ values, backgroundImage }: TerminalPreviewProps) {
   const { text } = useI18n();
   const descriptionId = useId();
   const background = cssColor(values.background, "#1e1e2e");
@@ -27,6 +50,8 @@ export const TerminalPreview = memo(function TerminalPreview({ values }: Termina
   const opacity = boundedNumber(values["background-opacity"], 1, 0, 1);
   const padding = boundedNumber(values["window-padding-x"], 12, 6, 48);
   const cursorStyle = values["cursor-style"] ?? "block";
+  const imageOpacity = boundedNumber(values["background-image-opacity"], 1, 0, 100);
+  const effectiveImageOpacity = Math.min(opacity * imageOpacity, 1);
 
   return (
     <div
@@ -55,31 +80,45 @@ export const TerminalPreview = memo(function TerminalPreview({ values }: Termina
           padding: `${padding}px`,
         }}
       >
-        <div className="terminal-line terminal-line--muted">Last login: today on ttys002</div>
-        <div className="terminal-line prompt-line">
-          <span className="prompt-mark">❯</span>
-          <span> git status --short</span>
-        </div>
-        <div className="terminal-line"><span className="git-modified"> M</span> src/config.rs</div>
-        <div className="terminal-line"><span className="git-new">??</span> ghostty-studio.conf</div>
-        <div className="terminal-line prompt-line terminal-line--spaced">
-          <span className="prompt-mark">❯</span>
-          <span> cargo test</span>
-        </div>
-        <div className="terminal-line test-line">
-          <span>test result: </span><strong>ok</strong><span>. 42 passed; 0 failed</span>
-        </div>
-        <div className="terminal-line path-line">
-          <ChevronRight size={14} />
-          <GitBranch size={13} />
-          <span>main</span>
-          <i className={`cursor cursor--${cursorStyle}`} />
+        {backgroundImage && (
+          <div
+            className="terminal-background-image"
+            style={{
+              backgroundImage: `url(${JSON.stringify(backgroundImage.dataUrl)})`,
+              backgroundSize: backgroundSize(values["background-image-fit"]),
+              backgroundPosition: backgroundPosition(values["background-image-position"]),
+              backgroundRepeat: values["background-image-repeat"] === "true" ? "repeat" : "no-repeat",
+              opacity: effectiveImageOpacity,
+            }}
+          />
+        )}
+        <div className="terminal-content">
+          <div className="terminal-line terminal-line--muted">Last login: today on ttys002</div>
+          <div className="terminal-line prompt-line">
+            <span className="prompt-mark">❯</span>
+            <span> git status --short</span>
+          </div>
+          <div className="terminal-line"><span className="git-modified"> M</span> src/config.rs</div>
+          <div className="terminal-line"><span className="git-new">??</span> ghostty-studio.conf</div>
+          <div className="terminal-line prompt-line terminal-line--spaced">
+            <span className="prompt-mark">❯</span>
+            <span> cargo test</span>
+          </div>
+          <div className="terminal-line test-line">
+            <span>test result: </span><strong>ok</strong><span>. 42 passed; 0 failed</span>
+          </div>
+          <div className="terminal-line path-line">
+            <ChevronRight size={14} />
+            <GitBranch size={13} />
+            <span>main</span>
+            <i className={`cursor cursor--${cursorStyle}`} />
+          </div>
         </div>
       </div>
       <span className="sr-only" id={descriptionId}>
         {text(
-          "模拟效果仅反映颜色、字体、间距与光标。它不会运行 Ghostty，也不能计算多份配置的最终生效值。",
-          "This simulation reflects color, font, spacing, and cursor settings. It does not run Ghostty or calculate final values across multiple configuration files.",
+          "模拟效果反映背景图片、颜色、字体、间距与光标，但不代表运行中的 Ghostty 窗口已经重新载入。",
+          "This simulation reflects the background image, colors, type, spacing, and cursor, but it does not mean a running Ghostty window has reloaded.",
         )}
       </span>
     </div>

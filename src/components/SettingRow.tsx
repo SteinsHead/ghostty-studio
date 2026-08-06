@@ -11,7 +11,6 @@ interface SettingRowProps {
   value: string;
   baselineValue: string;
   configuredInEditingLayer: boolean;
-  effectiveValueKnown: boolean;
   sourceLabel: string;
   onValueChange(key: string, value: string): void;
   onReset(key: string, baselineValue: string): void;
@@ -22,7 +21,6 @@ export const SettingRow = memo(function SettingRow({
   value,
   baselineValue,
   configuredInEditingLayer,
-  effectiveValueKnown,
   sourceLabel,
   onValueChange,
   onReset,
@@ -82,10 +80,12 @@ export const SettingRow = memo(function SettingRow({
               <dd>{configuredInEditingLayer ? sourceLabel : text("未设置", "Not set")}</dd>
             </div>
           </dl>
-          {!effectiveValueKnown && (
-            <p>{text("其他配置文件可能覆盖这里的设置。", "Another configuration file may override this setting.")}</p>
+          {copy.detail && (
+            <details className="setting-official-detail">
+              <summary>{text("Ghostty 原文", "Ghostty documentation")}</summary>
+              <p>{copy.detail}</p>
+            </details>
           )}
-          {copy.detail && <p>{copy.detail}</p>}
           {configuredInEditingLayer && (
             <button
               type="button"

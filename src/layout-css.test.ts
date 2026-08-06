@@ -3,9 +3,6 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const css = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
-const v2Marker = "/* v0.2 product shell";
-const v2Start = css.indexOf(v2Marker);
-expect(v2Start, "missing v0.2 product-shell styles").toBeGreaterThanOrEqual(0);
 
 // Resolve every desktop/base layer while excluding responsive and preference
 // media states. This catches cascade regressions where an older component rule
@@ -68,7 +65,7 @@ function expectDeclaration(header: string, property: string, value: string) {
   expect(resolvedDeclaration(header, property), `${header} should resolve ${property}`).toBe(value);
 }
 
-describe("v0.2 layout contract", () => {
+describe("layout contract", () => {
   it("keeps the desktop grid inside the viewport", () => {
     expectDeclaration(".app-shell", "grid-template-columns", "224px minmax(0, 1fr)");
     expectDeclaration(".app-shell", "grid-template-rows", "minmax(0, 1fr)");

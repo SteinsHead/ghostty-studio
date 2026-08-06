@@ -193,7 +193,7 @@ fn compatibility_diagnostics(
 ) -> Vec<String> {
     if !catalog.supports_version(version) {
         return vec![format!(
-            "Ghostty {} 的设置正在适配；当前仍可安全浏览。",
+            "Ghostty {} 暂不支持编辑。",
             version.unwrap_or("未知版本")
         )];
     }
@@ -207,12 +207,10 @@ fn compatibility_diagnostics(
         .count();
     let ready = options.iter().filter(|option| option.editable).count();
     if changed == 0 {
-        vec![format!(
-            "Ghostty 新增或调整了设置；已有的 {ready} 项可编辑设置不受影响。"
-        )]
+        vec!["Ghostty 设置已更新；现有可编辑设置仍可使用。".to_string()]
     } else {
         vec![format!(
-            "Ghostty 更新了 {changed} 项已适配设置；这些设置会在确认后重新开放，其余 {ready} 项仍可编辑。"
+            "{changed} 项设置在 Ghostty 更新中发生变化，暂不可编辑；其余 {ready} 项仍可使用。"
         )]
     }
 }
@@ -557,6 +555,21 @@ mod tests {
                     .count()
                     >= 20
             );
+            let image = schema
+                .options
+                .iter()
+                .find(|option| option.key == "background-image")
+                .unwrap();
+            assert_eq!(image.capability.reason.as_deref(), Some("needs-editor"));
+            assert_eq!(image.capability.activation, "reload");
+            let image_opacity = schema
+                .options
+                .iter()
+                .find(|option| option.key == "background-image-opacity")
+                .unwrap();
+            assert!(image_opacity.editable);
+            assert_eq!(image_opacity.capability.min, Some(0.0));
+            assert_eq!(image_opacity.capability.max, None);
         }
     }
 }

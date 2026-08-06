@@ -19,6 +19,10 @@ Ghostty Studio 是我为自己做的本地桌面配置器：打开平时使用�
 - 发现 macOS 与 XDG 配置候选；只有多个来源都可用时才请你选择。
 - 尚无默认配置时，经确认安全创建新配置，绝不覆盖已有文件。
 - 搜索并编辑已支持的设置；视觉选项会在相关页面提供上下文预览。
+- 将本地 PNG、JPEG 导入私有图片库，支持多选、手动或随机切换，以及适配、位置、平铺、
+  可见度和实时预览。
+- 区分“正在编辑的文件”和 Ghostty 的最终来源；若草稿会被后续 include 覆盖，可直接改到
+  真正生效的文件，保存后再由 Ghostty 核对最终标量值。
 - 默认跟随系统语言，也可随时在简体中文与英文之间切换。
 - 主流程只呈现真正能调整的设置；完整 Ghostty 目录仍可随时搜索和查阅。
 - 所有调整先留在草稿中，确认准确 diff 后才写入文件。
@@ -30,7 +34,7 @@ Ghostty Studio 是我为自己做的本地桌面配置器：打开平时使用�
 
 ## 下载
 
-[下载 Ghostty Studio v0.3.0](https://github.com/SteinsHead/ghostty-studio/releases/tag/v0.3.0)，
+[下载 Ghostty Studio v0.4.0](https://github.com/SteinsHead/ghostty-studio/releases/tag/v0.4.0)，
 适用于 macOS 11 或更高版本的 Apple Silicon Mac。
 
 这是一个早期预览版。应用已做 ad-hoc 签名，但尚未经过 Apple 公证，所以 macOS 首次
@@ -42,8 +46,10 @@ Ghostty Studio 是我为自己做的本地桌面配置器：打开平时使用�
 Ghostty Studio 仍是早期预览版，当前边界很明确：
 
 - 桌面端目前以 macOS 为主，可写设置契约基于 Ghostty 1.3.1 测试。
-- Ghostty 1.3.1 在 macOS 上已有 29 项经过验证的设置可以调整；其余设置仍可搜索，并会说明为什么需要不同的编辑方式。
-- 终端画面是安全的 DOM 模拟器；来源图尚未计算 include、reset 与重复设置下的全部最终生效值。
+- Ghostty 1.3.1 在 macOS 上已有 31 项经过验证的设置可以调整；其余设置仍可搜索，并会说明为什么需要不同的编辑方式。
+- 终端画面是安全的 DOM 模拟器。Studio 会按 Ghostty 1.3.1 的默认根文件及可变全局
+  include/reset 队列判断经过审核的标量写入；尚未通过同等兼容性审计的 Ghostty 版本会
+  停用依赖来源顺序的写入，重复设置和未审核语义仍保持只读。
 - 扩展 manifest 格式和校验器目前只面向开发者；应用内没有扩展浏览、安装或执行界面。
 - 预览安装包采用 ad-hoc 签名，尚未经过 Developer ID 签名和 Apple 公证。
 - 界面支持简体中文与英文。

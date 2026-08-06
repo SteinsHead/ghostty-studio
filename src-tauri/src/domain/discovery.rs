@@ -140,6 +140,43 @@ fn candidate(
     }
 }
 
+pub fn include_candidate(
+    path: PathBuf,
+    load_index: usize,
+    observed_symlink: bool,
+) -> ConfigCandidate {
+    let display_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or("included config");
+    let safe_name = display_name
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(80)
+        .collect::<String>();
+    let format = if path.extension().and_then(|extension| extension.to_str()) == Some("ghostty") {
+        "ghostty"
+    } else {
+        "legacy"
+    };
+    let mut result = candidate(
+        path,
+        &format!("Include · {safe_name}"),
+        "include",
+        format,
+        u8::try_from(load_index.saturating_add(4)).unwrap_or(u8::MAX),
+    );
+    // The graph retains the declared-path symlink observation even when its
+    // canonical node path points at a regular file. Never silently turn that
+    // into a writable target.
+    if observed_symlink {
+        result.symlink = true;
+        result.writable = false;
+    }
+    result
+}
+
 fn nearest_existing_parent(path: &Path) -> Option<&Path> {
     let mut current = path.parent();
     while let Some(candidate) = current {

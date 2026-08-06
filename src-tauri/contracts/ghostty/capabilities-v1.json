@@ -291,6 +291,44 @@
       }
     },
     {
+      "key": "background-image",
+      "observedFingerprints": ["b3d93bfb408a0a7a27ea2af2e5d1509a5002588e880f51dbe7729daac8cb4601"],
+      "kind": "text",
+      "choices": [],
+      "repeatable": false,
+      "risk": "normal",
+      "capability": {
+        "editMode": "none",
+        "reason": "needs-editor",
+        "activation": "reload",
+        "constraintBehavior": "reject",
+        "min": null,
+        "max": null,
+        "step": null,
+        "unit": null,
+        "platform": null
+      }
+    },
+    {
+      "key": "background-image-opacity",
+      "observedFingerprints": ["79d175f88d9ffd3b760595ff5f627cf29f4ee693c0dde6a558bc48bd9cbb8fea"],
+      "kind": "number",
+      "choices": [],
+      "repeatable": false,
+      "risk": "normal",
+      "capability": {
+        "editMode": "control",
+        "reason": null,
+        "activation": "reload",
+        "constraintBehavior": "reject",
+        "min": 0,
+        "max": null,
+        "step": 0.01,
+        "unit": "percent",
+        "platform": null
+      }
+    },
+    {
       "key": "background-image-position",
       "observedFingerprints": ["d0a38571bab75b80f74eea99a770bdedc177b8affd0feb2aa1c1a85eff187f2f"],
       "kind": "select",

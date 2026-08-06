@@ -20,6 +20,7 @@ pub struct CommandOutput {
     pub success: bool,
     pub stdout: String,
     pub stderr: String,
+    retryable_crash: bool,
 }
 
 #[derive(Debug)]
@@ -42,7 +43,7 @@ pub fn probe() -> GhosttyProbe {
             raw_version: None,
         };
     };
-    match run(&executable, &["--version"]) {
+    match run_with_transient_retry(&executable, &["--version"]) {
         Ok(output) if output.success => {
             let raw = output
                 .stdout
@@ -84,11 +85,25 @@ pub fn probe() -> GhosttyProbe {
 }
 
 pub fn show_default_config_with_docs(executable: &Path) -> Result<String, CommandError> {
-    let output = run(executable, &["+show-config", "--default", "--docs"])?;
+    let output = run_with_transient_retry(executable, &["+show-config", "--default", "--docs"])?;
     if !output.success {
         return Err(CommandError::new(
             "ghostty_schema_failed",
             summarized_error(&output.stderr, "Ghostty did not return its default schema"),
+        ));
+    }
+    Ok(output.stdout)
+}
+
+pub fn show_effective_config(executable: &Path) -> Result<String, CommandError> {
+    let output = run_with_transient_retry(executable, &["+show-config", "--changes-only=false"])?;
+    if !output.success {
+        return Err(CommandError::new(
+            "ghostty_effective_config_failed",
+            summarized_error(
+                &format!("{}\n{}", output.stderr, output.stdout),
+                "Ghostty did not return its effective startup configuration",
+            ),
         ));
     }
     Ok(output.stdout)
@@ -100,12 +115,12 @@ pub fn validate_config(
 ) -> Result<ValidationReport, CommandError> {
     let path = config_path.to_string_lossy();
     let argument = format!("--config-file={path}");
-    let output = run(executable, &["+validate-config", &argument])?;
+    let output = run_with_transient_retry(executable, &["+validate-config", &argument])?;
     Ok(validation_report(output))
 }
 
 pub fn validate_default_config(executable: &Path) -> Result<ValidationReport, CommandError> {
-    let output = run(executable, &["+validate-config"])?;
+    let output = run_with_transient_retry(executable, &["+validate-config"])?;
     Ok(validation_report(output))
 }
 
@@ -128,10 +143,10 @@ fn validation_report(output: CommandOutput) -> ValidationReport {
     ValidationReport {
         valid: false,
         diagnostics: if diagnostic_count == 0 {
-            vec!["Ghostty 拒绝了候选配置，但没有返回可解析的诊断。".to_string()]
+            vec!["Ghostty 无法读取这份配置，但未提供具体原因。".to_string()]
         } else {
             vec![format!(
-                "Ghostty 拒绝了候选配置（返回 {diagnostic_count} 条诊断）；为避免配置值或路径进入 WebView，原始输出未显示。"
+                "Ghostty 无法读取这份配置（发现 {diagnostic_count} 条问题）。为保护路径和配置值，详细信息未显示。"
             )]
         },
     }
@@ -193,11 +208,38 @@ fn run(executable: &Path, arguments: &[&str]) -> Result<CommandOutput, CommandEr
             "Ghostty command output exceeded the safety limit",
         ));
     }
+    #[cfg(unix)]
+    let retryable_crash = {
+        use std::os::unix::process::ExitStatusExt;
+        status.code() == Some(139) || status.signal() == Some(11)
+    };
+    #[cfg(not(unix))]
+    let retryable_crash = status.code() == Some(139);
     Ok(CommandOutput {
         success: status.success(),
         stdout: String::from_utf8_lossy(&stdout).into_owned(),
         stderr: String::from_utf8_lossy(&stderr).into_owned(),
+        retryable_crash,
     })
+}
+
+fn run_with_transient_retry(
+    executable: &Path,
+    arguments: &[&str],
+) -> Result<CommandOutput, CommandError> {
+    for attempt in 0..3 {
+        let output = run(executable, arguments)?;
+        if !output.retryable_crash {
+            return Ok(output);
+        }
+        if attempt == 2 {
+            return Err(CommandError::new(
+                "ghostty_helper_crashed",
+                "Ghostty's configuration helper crashed repeatedly; the configuration result was not inferred",
+            ));
+        }
+    }
+    unreachable!("the retry loop always returns")
 }
 
 fn read_limited(reader: impl Read, limit: usize) -> Result<(Vec<u8>, bool), std::io::Error> {
@@ -231,9 +273,7 @@ fn summarized_error(stderr: &str, fallback: &str) -> String {
     if diagnostic_count == 0 {
         fallback.to_string()
     } else {
-        format!(
-            "{fallback}（Ghostty 返回 {diagnostic_count} 条诊断；原始输出因可能包含配置值或路径而未显示）"
-        )
+        format!("{fallback}（发现 {diagnostic_count} 条问题；为保护路径和配置值，详细信息未显示）")
     }
 }
 
@@ -252,7 +292,7 @@ mod tests {
     fn diagnostic_summary_never_echoes_raw_output() {
         let secret = "env = TOKEN=super-secret\n/path/to/private/config";
         let summary = summarized_error(secret, "schema failed");
-        assert!(summary.contains("2 条诊断"));
+        assert!(summary.contains("2 条问题"));
         assert!(!summary.contains("super-secret"));
         assert!(!summary.contains("/path/to/private"));
     }

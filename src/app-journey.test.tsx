@@ -5,10 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { backend } from "./backend";
 import { demoEnvironment, demoSchema } from "./demo";
+import { isBackgroundSetting } from "./backgroundImageModel";
 import { I18nProvider } from "./i18n";
 import type { ConfigCandidate, ConfigGraph, ConfigSession, EnvironmentReport } from "./types";
 
 const emptyGraph: ConfigGraph = {
+  graphRevision: "empty",
   complete: true,
   semanticsKnown: false,
   nodes: [],
@@ -30,13 +32,18 @@ function sessionFor(candidate: ConfigCandidate): ConfigSession {
         .filter((option) => option.editable)
         .map((option) => [option.key, [...option.currentValues]]),
     ),
-    configuredSettings: demoSchema.options.map((option) => ({
+    configuredSettings: demoSchema.options.filter((option) => !isBackgroundSetting(option.key)).map((option) => ({
       key: option.key,
       occurrenceCount: Math.max(1, option.currentValues.length),
       valueExposure: option.editable ? "available" as const : "protected" as const,
     })),
     unrecognizedSettingCount: 0,
     diagnostics: [],
+    backgroundImage: { kind: "none", assetId: null },
+    effectiveValuesKnown: true,
+    effectiveValues: {},
+    effectiveBackgroundImage: { kind: "none", assetId: null },
+    settingEffects: {},
   };
 }
 
@@ -72,6 +79,12 @@ describe("primary application journey", () => {
       diagnostics: [],
       valid: true,
       activation: "reload",
+      effect: {
+        status: "effective",
+        affectedKeys: [],
+        suggestedCandidateId: null,
+        suggestedLabel: null,
+      },
     }));
     container = document.createElement("div");
     document.body.append(container);
@@ -133,7 +146,7 @@ describe("primary application journey", () => {
 
     act(() => container.querySelector<HTMLButtonElement>(".source-context")!.click());
     expect(container.querySelectorAll('[role="dialog"]')).toHaveLength(1);
-    expect(container.querySelector('[role="dialog"] h2')?.textContent).toBe("选择配置");
+    expect(container.querySelector('[role="dialog"] h2')?.textContent).toBe("选择写入位置");
 
     act(() => window.dispatchEvent(new KeyboardEvent("keydown", {
       key: "s",
@@ -142,7 +155,7 @@ describe("primary application journey", () => {
     })));
 
     expect(container.querySelectorAll('[role="dialog"]')).toHaveLength(1);
-    expect(container.querySelector('[role="dialog"] h2')?.textContent).toBe("选择配置");
+    expect(container.querySelector('[role="dialog"] h2')?.textContent).toBe("选择写入位置");
     expect(backend.stageChanges).not.toHaveBeenCalled();
   });
 
@@ -162,6 +175,27 @@ describe("primary application journey", () => {
     expect(container.textContent).toContain("查看全部设置");
   });
 
+  it("explains background-image contract drift instead of exposing broken controls", async () => {
+    const preferred = environment.candidates[0];
+    window.localStorage.setItem("ghostty-studio:preferred-candidate", preferred.id);
+    const changedSchema = structuredClone(demoSchema);
+    const opacity = changedSchema.options.find((option) => option.key === "background-image-opacity")!;
+    opacity.capability.editMode = "none";
+    opacity.capability.reason = "setting-changed";
+    vi.mocked(backend.loadRuntimeSchema).mockResolvedValueOnce(changedSchema);
+
+    act(() => root.render(<App />));
+    await settle();
+    const appearance = [...container.querySelectorAll<HTMLButtonElement>(".category-nav button")]
+      .find((button) => button.textContent?.trim() === "外观")!;
+    act(() => appearance.click());
+
+    expect(container.querySelector(".background-editor")).toBeNull();
+    expect(container.querySelector(".background-compatibility")).not.toBeNull();
+    expect(container.textContent).toContain("背景图片暂不可编辑");
+    expect(container.querySelector('.background-compatibility input, .background-compatibility button')).toBeNull();
+  });
+
   it("shows protected configured keys without exposing their values", async () => {
     const preferred = environment.candidates[0];
     window.localStorage.setItem("ghostty-studio:preferred-candidate", preferred.id);
@@ -176,7 +210,7 @@ describe("primary application journey", () => {
       .find((row) => row.querySelector("code")?.textContent === "theme")!;
     expect(themeRow).toBeTruthy();
     expect(themeRow.textContent).toContain("这份文件已设置");
-    expect(themeRow.textContent).toContain("Studio 会保留原值");
+    expect(themeRow.textContent).toContain("原值已保留");
     expect(themeRow.textContent).not.toContain("Catppuccin");
     expect(themeRow.querySelector("input, select, button")).toBeNull();
   });
@@ -240,7 +274,8 @@ describe("primary application journey", () => {
     expect(background.textContent).toContain("多处设置");
     expect(background.querySelector("input, select, button")).toBeNull();
     act(() => background.querySelector<HTMLDetailsElement>("details")!.setAttribute("open", ""));
-    expect(background.textContent).toContain("在文件中出现了 2 次");
+    expect(background.textContent).toContain("这份文件中出现了 2 次");
+    expect(background.textContent).toContain("请在配置文件中合并或编辑这些值");
   });
 
   it("keeps transient feedback in the selected interface language", async () => {
@@ -272,4 +307,39 @@ describe("primary application journey", () => {
     expect(container.querySelector(".save-toast")?.textContent).toContain("Discarded 1 change");
     expect(container.querySelector(".save-toast__action")?.textContent).toBe("Undo");
   });
+
+  it("builds the draft preview from effective values and ignores an overridden edit", async () => {
+    const preferred = environment.candidates[0];
+    window.localStorage.setItem("ghostty-studio:preferred-candidate", preferred.id);
+    vi.mocked(backend.openConfig).mockImplementation(async () => {
+      const opened = sessionFor(preferred);
+      opened.values["font-size"] = ["12"];
+      opened.effectiveValues = { "font-size": ["20"] };
+      opened.settingEffects = {
+        "font-size": {
+          status: "overridden",
+          sourceCandidateId: environment.candidates[1].id,
+          sourceLabel: environment.candidates[1].label,
+        },
+      };
+      return opened;
+    });
+
+    act(() => root.render(<App />));
+    await settle();
+
+    const screen = container.querySelector<HTMLElement>(".preview-pane .terminal-screen")!;
+    expect(screen.style.fontSize).toBe("20px");
+
+    const fontSize = container.querySelector<HTMLInputElement>('input[aria-label="字号 数值"]')!;
+    const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    act(() => {
+      valueSetter.call(fontSize, "18");
+      fontSize.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    expect(screen.style.fontSize).toBe("20px");
+    expect(container.querySelector(".preview-note")?.textContent).toContain("会被其他配置覆盖");
+  });
+
 });

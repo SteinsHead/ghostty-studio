@@ -64,6 +64,11 @@ export const COMMON_SETTING_KEYS = [
   "background",
   "foreground",
   "background-opacity",
+  "background-image",
+  "background-image-opacity",
+  "background-image-fit",
+  "background-image-position",
+  "background-image-repeat",
   "background-opacity-cells",
   "font-size",
   "cursor-style",
@@ -77,6 +82,11 @@ export const PREVIEW_SETTING_KEYS = new Set([
   "background",
   "foreground",
   "background-opacity",
+  "background-image",
+  "background-image-opacity",
+  "background-image-fit",
+  "background-image-position",
+  "background-image-repeat",
   "font-family",
   "font-size",
   "window-padding-x",
@@ -90,9 +100,12 @@ export function chooseStartupCandidate(
   preferredId: string | null,
 ): ConfigCandidate | null {
   const existing = candidates.filter((candidate) => candidate.exists);
-  if (existing.length === 1) return existing[0];
-  if (existing.length === 0 || !preferredId) return null;
-  return existing.find((candidate) => candidate.id === preferredId) ?? null;
+  if (preferredId) {
+    const preferred = existing.find((candidate) => candidate.id === preferredId);
+    if (preferred) return preferred;
+  }
+  const roots = existing.filter((candidate) => candidate.source !== "include");
+  return roots.length === 1 ? roots[0] : null;
 }
 
 /**
@@ -182,9 +195,9 @@ export function restrictionLabel(option: RuntimeOption, locale: AppLocale = "zh-
         ? textForLocale(locale, `仅适用于 ${option.platform}`, `${option.platform} only`)
         : textForLocale(locale, "不适用于当前系统", "Unavailable on this system");
     case "version-not-supported":
-      return textForLocale(locale, "等待版本适配", "Version support pending");
+      return textForLocale(locale, "当前版本只读", "Read only in this version");
     case "setting-changed":
-      return textForLocale(locale, "更新后待确认", "Review after update");
+      return textForLocale(locale, "设置已变化", "Changed in update");
     case "needs-editor":
       return textForLocale(locale, "在配置文件中调整", "Edit in config file");
     case "unrecognized-setting":
@@ -197,24 +210,25 @@ export function restrictionLabel(option: RuntimeOption, locale: AppLocale = "zh-
 export function restrictionDescription(option: RuntimeOption, locale: AppLocale = "zh-CN"): string {
   switch (option.capability.reason) {
     case "needs-list-editor":
-      return textForLocale(locale, "这项设置包含有顺序的多项内容，Studio 会保留原配置。", "This setting contains an ordered list. Studio preserves the existing entries.");
+      return textForLocale(locale, "包含多个有序值，请在配置文件中编辑。", "This is an ordered list. Edit it in the config file.");
     case "needs-theme-picker":
-      return textForLocale(locale, "主题可以分别指定浅色与深色版本，目前请在配置文件中调整。", "Themes can define separate light and dark variants. Edit this in the config file for now.");
+      return textForLocale(locale, "可分别设置浅色与深色主题，请在配置文件中编辑。", "Light and dark themes can be set separately. Edit them in the config file.");
     case "protected":
-      return textForLocale(locale, "它可能包含命令、路径或隐私信息，因此不会在普通控件中显示或改写。", "This setting may contain commands, paths, or private data, so Studio does not expose or rewrite it here.");
+      return textForLocale(locale, "可能包含命令、路径或隐私信息，请在配置文件中编辑。", "This may contain commands, paths, or private data. Edit it in the config file.");
     case "advanced-setting":
-      return textForLocale(locale, "它需要专门的编辑方式，Studio 会保留原配置。", "This setting needs a dedicated editor. Studio preserves the existing value.");
+    case "needs-editor":
+      return textForLocale(locale, "需要专用编辑器，暂不支持。", "A dedicated editor is required and not yet available.");
     case "platform-unavailable":
       return option.platform
         ? textForLocale(locale, `这项设置仅适用于 ${option.platform}。`, `This setting is available only on ${option.platform}.`)
         : textForLocale(locale, "这项设置不适用于当前系统。", "This setting is not available on this system.");
     case "version-not-supported":
-      return textForLocale(locale, "当前 Ghostty 版本尚未支持安全调整这项设置。", "This Ghostty version is not yet supported for safe editing.");
+      return textForLocale(locale, "当前版本暂不支持编辑。", "Editing is unavailable for this version.");
     case "setting-changed":
-      return textForLocale(locale, "Ghostty 最近改变了这项设置，确认新行为后会重新开放编辑。", "Ghostty recently changed this setting. Editing will return after its new behavior is verified.");
+      return textForLocale(locale, "该设置已在 Ghostty 更新中发生变化，暂不可编辑。", "This setting changed in a Ghostty update and is temporarily read-only.");
     case "unrecognized-setting":
       return textForLocale(locale, "Ghostty 当前无法识别这个配置名。它可能来自旧版本、扩展，也可能存在拼写错误。", "Ghostty does not recognize this key. It may come from an older version, an extension, or a typo.");
     default:
-      return textForLocale(locale, "这项设置需要更合适的编辑方式，目前请在配置文件中调整。", "This setting needs a more suitable editor. Edit it in the config file for now.");
+      return textForLocale(locale, "请在配置文件中编辑。", "Edit this in the config file.");
   }
 }

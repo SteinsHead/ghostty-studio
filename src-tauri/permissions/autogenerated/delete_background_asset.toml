@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-delete-background-asset"
+description = "Enables the delete_background_asset command without any pre-configured scope."
+commands.allow = ["delete_background_asset"]
+
+[[permission]]
+identifier = "deny-delete-background-asset"
+description = "Denies the delete_background_asset command without any pre-configured scope."
+commands.deny = ["delete_background_asset"]

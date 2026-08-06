@@ -263,16 +263,16 @@ function firstSentence(description: string): string {
 }
 
 function officialExcerpt(description: string): string {
-  if (description.length <= 360) return description;
-  const shortened = description.slice(0, 360);
+  if (description.length <= 180) return description;
+  const shortened = description.slice(0, 180);
   const lastSentence = Math.max(
     shortened.lastIndexOf(". "),
     shortened.lastIndexOf("! "),
     shortened.lastIndexOf("? "),
   );
-  if (lastSentence >= 160) return shortened.slice(0, lastSentence + 1).trimEnd();
+  if (lastSentence >= 100) return shortened.slice(0, lastSentence + 1).trimEnd();
   const lastSpace = shortened.lastIndexOf(" ");
-  return `${shortened.slice(0, lastSpace > 240 ? lastSpace : 360).trimEnd()}…`;
+  return `${shortened.slice(0, lastSpace > 120 ? lastSpace : 180).trimEnd()}…`;
 }
 
 function officialDetail(official: string, summary: string): string | null {
