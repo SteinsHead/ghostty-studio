@@ -485,6 +485,7 @@ export default function App() {
       if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === "k") {
         event.preventDefault();
         searchInputRef.current?.focus();
+        searchInputRef.current?.select();
       }
       if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === "s") {
         event.preventDefault();
@@ -2032,6 +2033,12 @@ export default function App() {
             ref={searchInputRef}
             value={search}
             onChange={(event) => setSearch(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape" && search) {
+                event.preventDefault();
+                setSearch("");
+              }
+            }}
             placeholder={text("搜索设置", "Search settings")}
             aria-label={text("搜索设置", "Search settings")}
           />

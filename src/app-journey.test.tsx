@@ -234,6 +234,39 @@ describe("primary application journey", () => {
     expect(row.querySelector("input, select, button")).toBeNull();
   });
 
+  it("selects the current search with Command-K and clears it with Escape", async () => {
+    const preferred = environment.candidates[0];
+    window.localStorage.setItem("ghostty-studio:preferred-candidate", preferred.id);
+    act(() => root.render(<App />));
+    await settle();
+
+    const search = container.querySelector<HTMLInputElement>('input[aria-label="搜索设置"]')!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    act(() => {
+      setter.call(search, "opacity");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+      search.blur();
+    });
+
+    act(() => window.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "k",
+      metaKey: true,
+      bubbles: true,
+    })));
+
+    expect(document.activeElement).toBe(search);
+    expect(search.selectionStart).toBe(0);
+    expect(search.selectionEnd).toBe("opacity".length);
+
+    act(() => search.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "Escape",
+      bubbles: true,
+    })));
+
+    expect(search.value).toBe("");
+    expect(document.activeElement).toBe(search);
+  });
+
   it("moves from the complete catalog to the real editor", async () => {
     const preferred = environment.candidates[0];
     window.localStorage.setItem("ghostty-studio:preferred-candidate", preferred.id);
