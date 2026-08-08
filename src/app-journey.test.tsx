@@ -248,6 +248,12 @@ describe("primary application journey", () => {
       search.blur();
     });
 
+    const resultStatus = container.querySelector<HTMLElement>("#search-result-count")!;
+    expect(search.getAttribute("aria-keyshortcuts")).toBe("Meta+K Control+K");
+    expect(search.getAttribute("aria-describedby")).toBe("search-result-count");
+    expect(resultStatus.getAttribute("role")).toBe("status");
+    expect(resultStatus.getAttribute("aria-live")).toBe("polite");
+
     act(() => window.dispatchEvent(new KeyboardEvent("keydown", {
       key: "k",
       metaKey: true,
@@ -265,6 +271,8 @@ describe("primary application journey", () => {
 
     expect(search.value).toBe("");
     expect(document.activeElement).toBe(search);
+    expect(search.hasAttribute("aria-describedby")).toBe(false);
+    expect(container.querySelector("#search-result-count")).toBeNull();
   });
 
   it("moves from the complete catalog to the real editor", async () => {

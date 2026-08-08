@@ -2041,6 +2041,8 @@ export default function App() {
             }}
             placeholder={text("搜索设置", "Search settings")}
             aria-label={text("搜索设置", "Search settings")}
+            aria-keyshortcuts="Meta+K Control+K"
+            aria-describedby={search ? "search-result-count" : undefined}
           />
           {search ? (
             <button
@@ -2191,7 +2193,11 @@ export default function App() {
                 <div className="section-heading">
                   <div>
                     <h1>{pageTitle}</h1>
-                    {pageDescription && <p>{pageDescription}</p>}
+                    {pageDescription && (
+                      <p id="search-result-count" role="status" aria-live="polite" aria-atomic="true">
+                        {pageDescription}
+                      </p>
+                    )}
                   </div>
                 </div>
 
