@@ -25,6 +25,8 @@ import { backend, isDesktop } from "./backend";
 import { ConfigSourcePanel } from "./components/ConfigSourcePanel";
 import { BackgroundImageEditor } from "./components/BackgroundImageEditor";
 import { ConfigGraphPanel } from "./components/ConfigGraphPanel";
+import { Disclosure } from "./components/Disclosure";
+import { Presence } from "./components/Presence";
 import { ReviewPanel } from "./components/ReviewPanel";
 import { ReferenceSettingRow } from "./components/ReferenceSettingRow";
 import { SetupPage } from "./components/SetupPage";
@@ -1945,6 +1947,13 @@ export default function App() {
 
   const platform = environment?.platform.toLocaleLowerCase() ?? "";
   const primaryModifier = platform.includes("mac") ? "⌘" : "Ctrl";
+  const searchLabel = text("搜索名称或 Ghostty 配置项", "Search names or Ghostty keys");
+  const reloadLabel = refreshing
+    ? text("正在重新读取 Ghostty 配置…", "Reloading Ghostty configuration…")
+    : text("重新读取 Ghostty 配置", "Reload Ghostty configuration");
+  const connectionLabel = isDesktop
+    ? `Ghostty ${environment?.ghostty.version ?? text("未找到", "Not found")}`
+    : text("试用模式", "Try mode");
 
   const selectCategory = (nextCategory: string) => {
     setCategory(nextCategory);
@@ -2039,8 +2048,8 @@ export default function App() {
                 setSearch("");
               }
             }}
-            placeholder={text("搜索设置", "Search settings")}
-            aria-label={text("搜索设置", "Search settings")}
+            placeholder={searchLabel}
+            aria-label={searchLabel}
             aria-keyshortcuts="Meta+K Control+K"
             aria-describedby={search ? "search-result-count" : undefined}
           />
@@ -2156,17 +2165,24 @@ export default function App() {
             <button
               type="button"
               className="toolbar-icon"
-              aria-label={text("重新读取 Ghostty 配置", "Reload Ghostty configuration")}
-              title={text("重新读取", "Reload")}
+              aria-label={reloadLabel}
+              aria-busy={refreshing}
+              title={reloadLabel}
               onClick={() => void refreshWorkspace(true)}
               disabled={refreshing || applying || switchingCandidateId !== null}
             >
               <RefreshCw size={15} className={refreshing ? "spin" : ""} />
             </button>
-            <span className={`connection-state connection-state--${workspaceSummary.state}`}>
-              <i /><span>{isDesktop
-                ? `Ghostty ${environment?.ghostty.version ?? text("未找到", "Not found")}`
-                : text("试用模式", "Try mode")}</span>
+            <span
+              className={`connection-state connection-state--${workspaceSummary.state}`}
+              role="status"
+              aria-label={connectionLabel}
+              title={connectionLabel}
+            >
+              <i /><span aria-hidden="true">{connectionLabel}</span>
+            </span>
+            <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+              {refreshing ? reloadLabel : ""}
             </span>
           </div>
         </header>
@@ -2224,13 +2240,17 @@ export default function App() {
                 )}
 
                 {showPreview && (
-                  <details className="inline-preview">
-                    <summary>{text("显示外观预览", "Show appearance preview")}</summary>
+                  <Disclosure
+                    className="inline-preview"
+                    summary={<><ChevronRight size={13} /> {text("显示外观预览", "Show appearance preview")}</>}
+                    summaryLabel={text("显示或隐藏外观预览", "Show or hide appearance preview")}
+                    bodyClassName="inline-preview__body"
+                  >
                     <TerminalPreview
                       values={previewMode === "draft" ? previewValues : savedPreviewValues}
                       backgroundImage={previewMode === "draft" ? draftBackgroundPreview : savedBackgroundPreview}
                     />
-                  </details>
+                  </Disclosure>
                 )}
 
                 {showBackgroundEditor && (
@@ -2333,7 +2353,11 @@ export default function App() {
                   <div className="empty-state">
                     <Search size={22} />
                     <strong>{search
-                      ? text("没有找到相关设置", "No matching settings")
+                      ? text(
+                          "没有找到与“{query}”相关的设置",
+                          "No settings found for “{query}”",
+                          { query: search },
+                        )
                       : category === "configured"
                         ? text("这份文件还没有设置项目", "This file has no configured settings yet")
                         : text("这里暂时没有可调整的设置", "No editable settings are available here yet")}</strong>
@@ -2388,107 +2412,112 @@ export default function App() {
           </div>
         )}
 
-        {session && changes.length > 0 && (
-          <section className={`draft-dock ${showPreview ? "draft-dock--settings-column" : ""}`} aria-label={text("未保存的修改", "Unsaved changes")}>
-            <div role="status" aria-live="polite">
-              <span className="draft-dot" />
-              <strong>{text(
-                "{count} 项修改尚未保存",
-                "{count} unsaved {noun}",
-                { count: changes.length, noun: changes.length === 1 ? "change" : "changes" },
-              )}</strong>
-            </div>
-            <div className="draft-dock__actions">
-              <button type="button" className="button button--secondary" onClick={resetAllDraft} disabled={refreshing || applying || switchingCandidateId !== null || restoringSnapshotId !== null}>
-                <RotateCcw size={14} /> {text("放弃修改", "Discard")}
-              </button>
+        <Presence show={Boolean(session && changes.length > 0)} className="draft-presence">
+          {session && (
+            <section className={`draft-dock ${showPreview ? "draft-dock--settings-column" : ""}`} aria-label={text("未保存的修改", "Unsaved changes")}>
+              <div role="status" aria-live="polite">
+                <span className="draft-dot" />
+                <strong>{text(
+                  "{count} 项修改尚未保存",
+                  "{count} unsaved {noun}",
+                  { count: changes.length, noun: changes.length === 1 ? "change" : "changes" },
+                )}</strong>
+              </div>
+              <div className="draft-dock__actions">
+                <button type="button" className="button button--secondary" onClick={resetAllDraft} disabled={refreshing || applying || switchingCandidateId !== null || restoringSnapshotId !== null}>
+                  <RotateCcw size={14} /> {text("放弃修改", "Discard")}
+                </button>
+                <button
+                  type="button"
+                  className="button button--primary"
+                  onClick={() => void openReview()}
+                  disabled={refreshing || reviewLoading || applying || switchingCandidateId !== null || restoringSnapshotId !== null}
+                >
+                  {reviewLoading ? text("正在检查…", "Checking…") : isDesktop ? text("检查并保存", "Review & save") : text("查看更改", "Review changes")}
+                  <kbd>{primaryModifier}S</kbd>
+                </button>
+              </div>
+            </section>
+          )}
+        </Presence>
+
+        <Presence show={Boolean(notice)} className="toast-presence">
+          {notice && (
+            <div className="save-toast">
+              <CheckCircle2 size={17} />
+              <span role="status" aria-live="polite">{notice}</span>
+              {discardedDraft && (
+                <button type="button" className="save-toast__action" onClick={undoDiscardedDraft}>
+                  {text("撤销", "Undo")}
+                </button>
+              )}
               <button
                 type="button"
-                className="button button--primary"
-                onClick={() => void openReview()}
-                disabled={refreshing || reviewLoading || applying || switchingCandidateId !== null || restoringSnapshotId !== null}
+                aria-label={text("关闭提示", "Dismiss message")}
+                onClick={() => {
+                  setNotice(null);
+                  setDiscardedDraft(null);
+                }}
               >
-                {reviewLoading ? text("正在检查…", "Checking…") : isDesktop ? text("检查并保存", "Review & save") : text("查看更改", "Review changes")}
-                <kbd>{primaryModifier}S</kbd>
+                <X size={14} />
               </button>
             </div>
-          </section>
-        )}
-
-        {notice && (
-          <div className="save-toast">
-            <CheckCircle2 size={17} />
-            <span role="status" aria-live="polite">{notice}</span>
-            {discardedDraft && (
-              <button type="button" className="save-toast__action" onClick={undoDiscardedDraft}>
-                {text("撤销", "Undo")}
-              </button>
-            )}
-            <button
-              type="button"
-              aria-label={text("关闭提示", "Dismiss message")}
-              onClick={() => {
-                setNotice(null);
-                setDiscardedDraft(null);
-              }}
-            >
-              <X size={14} />
-            </button>
-          </div>
-        )}
+          )}
+        </Presence>
       </main>
 
-      {reviewOpen && (
-        <ReviewPanel
-          changes={changes}
-          preview={changePreview}
-          loading={reviewLoading}
-          applying={applying}
-          busy={switchingCandidateId !== null || restoringSnapshotId !== null}
-          canRecover={reviewCanRecover}
-          readOnly={session?.readOnly ?? true}
-          targetLabel={activeCandidate?.label}
-          previewOnly={!isDesktop}
-          backgroundAssetNames={Object.fromEntries(backgroundAssets.map((asset) => [asset.id, asset.displayName]))}
-          onClose={closeReview}
-          onApply={applyReviewedChanges}
-          onRetry={() => void openReview()}
-          onRecover={() => void recoverReview()}
-          onUseSuggestedSource={(candidateId) => void moveDraftToCandidate(candidateId)}
-        />
-      )}
-      {graphOpen && <ConfigGraphPanel graph={configGraph} onClose={() => setGraphOpen(false)} />}
-      {sourcePanelOpen && (
-        <ConfigSourcePanel
-          environment={environment}
-          activeCandidate={activeCandidate}
-          pendingChanges={changes.length}
-          switchingCandidateId={switchingCandidateId}
-          error={sourceError}
-          onClose={() => setSourcePanelOpen(false)}
-          onOpenGraph={() => {
-            setSourcePanelOpen(false);
-            setGraphOpen(true);
-          }}
-          onSelect={switchCandidate}
-          onCreate={createCandidate}
-        />
-      )}
-      {historyOpen && (
-        <SnapshotHistoryPanel
-          snapshots={snapshots}
-          loading={historyLoading}
-          error={historyError}
-          success={historyNotice}
-          readOnly={!isDesktop || (session?.readOnly ?? true)}
-          busy={switchingCandidateId !== null || applying}
-          pendingChanges={changes.length}
-          restoringId={restoringSnapshotId}
-          onClose={() => setHistoryOpen(false)}
-          onRetry={() => void loadSnapshots()}
-          onRestore={restoreSnapshot}
-        />
-      )}
+      <Presence show={reviewOpen || graphOpen || sourcePanelOpen || historyOpen}>
+        {reviewOpen ? (
+          <ReviewPanel
+            changes={changes}
+            preview={changePreview}
+            loading={reviewLoading}
+            applying={applying}
+            busy={switchingCandidateId !== null || restoringSnapshotId !== null}
+            canRecover={reviewCanRecover}
+            readOnly={session?.readOnly ?? true}
+            targetLabel={activeCandidate?.label}
+            previewOnly={!isDesktop}
+            backgroundAssetNames={Object.fromEntries(backgroundAssets.map((asset) => [asset.id, asset.displayName]))}
+            onClose={closeReview}
+            onApply={applyReviewedChanges}
+            onRetry={() => void openReview()}
+            onRecover={() => void recoverReview()}
+            onUseSuggestedSource={(candidateId) => void moveDraftToCandidate(candidateId)}
+          />
+        ) : graphOpen ? (
+          <ConfigGraphPanel graph={configGraph} onClose={() => setGraphOpen(false)} />
+        ) : sourcePanelOpen ? (
+          <ConfigSourcePanel
+            environment={environment}
+            activeCandidate={activeCandidate}
+            pendingChanges={changes.length}
+            switchingCandidateId={switchingCandidateId}
+            error={sourceError}
+            onClose={() => setSourcePanelOpen(false)}
+            onOpenGraph={() => {
+              setSourcePanelOpen(false);
+              setGraphOpen(true);
+            }}
+            onSelect={switchCandidate}
+            onCreate={createCandidate}
+          />
+        ) : historyOpen ? (
+          <SnapshotHistoryPanel
+            snapshots={snapshots}
+            loading={historyLoading}
+            error={historyError}
+            success={historyNotice}
+            readOnly={!isDesktop || (session?.readOnly ?? true)}
+            busy={switchingCandidateId !== null || applying}
+            pendingChanges={changes.length}
+            restoringId={restoringSnapshotId}
+            onClose={() => setHistoryOpen(false)}
+            onRetry={() => void loadSnapshots()}
+            onRestore={restoreSnapshot}
+          />
+        ) : null}
+      </Presence>
     </div>
   );
 }

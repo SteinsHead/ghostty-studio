@@ -5,17 +5,20 @@ import { describe, expect, it } from "vitest";
 const css = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 
 // Resolve every desktop/base layer while excluding responsive and preference
-// media states. This catches cascade regressions where an older component rule
+// states. This catches cascade regressions where an older component rule
 // accidentally overrides the current design-system layer.
-function withoutMediaBlocks(source: string): string {
+function withoutConditionalBlocks(source: string): string {
   let cursor = 0;
   let result = "";
   while (cursor < source.length) {
     const mediaStart = source.indexOf("@media", cursor);
-    if (mediaStart < 0) return result + source.slice(cursor);
-    result += source.slice(cursor, mediaStart);
-    const blockStart = source.indexOf("{", mediaStart);
-    expect(blockStart, "unterminated media query").toBeGreaterThan(mediaStart);
+    const containerStart = source.indexOf("@container", cursor);
+    const starts = [mediaStart, containerStart].filter((index) => index >= 0);
+    if (starts.length === 0) return result + source.slice(cursor);
+    const conditionalStart = Math.min(...starts);
+    result += source.slice(cursor, conditionalStart);
+    const blockStart = source.indexOf("{", conditionalStart);
+    expect(blockStart, "unterminated conditional rule").toBeGreaterThan(conditionalStart);
     let depth = 1;
     let index = blockStart + 1;
     while (index < source.length && depth > 0) {
@@ -23,13 +26,13 @@ function withoutMediaBlocks(source: string): string {
       if (source[index] === "}") depth -= 1;
       index += 1;
     }
-    expect(depth, "unterminated media-query block").toBe(0);
+    expect(depth, "unterminated conditional block").toBe(0);
     cursor = index;
   }
   return result;
 }
 
-const desktopCss = withoutMediaBlocks(css);
+const desktopCss = withoutConditionalBlocks(css);
 
 function ruleBlocks(header: string): string[] {
   const escapedHeader = header.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -151,6 +154,24 @@ describe("layout contract", () => {
     expectDeclaration(".setting-input", "display", "grid");
     expectDeclaration(".setting-input", "grid-template-columns", "minmax(0, 1fr) 32px");
     expectDeclaration(".setting-inspector", "grid-column", "1 / -1");
+  });
+
+  it("adapts setting rows to their content pane instead of the outer window", () => {
+    expectDeclaration(".settings-pane", "container-name", "settings-pane");
+    expectDeclaration(".settings-pane", "container-type", "inline-size");
+    const query = css.slice(css.indexOf("@container settings-pane (max-width: 640px)"));
+    expect(query).toContain(".setting-row,");
+    expect(query).toContain("grid-template-columns: minmax(0, 1fr)");
+    expect(query).toContain("grid-template-columns: minmax(0, 240px) 32px");
+  });
+
+  it("uses shared motion timing and keeps reduced-motion support", () => {
+    expectDeclaration(":root", "--motion-standard", "180ms");
+    expectDeclaration(":root", "--motion-dialog", "200ms");
+    expect(css).toContain('@media (prefers-reduced-motion: reduce)');
+    expect(css).toContain('.presence[data-presence="exiting"] .review-backdrop');
+    expect(css.match(/^\.review-backdrop \{/gm)).toHaveLength(1);
+    expect(css.match(/^\.review-panel \{/gm)).toHaveLength(1);
   });
 
   it("removes empty feedback spacing and keeps the switch state visible", () => {

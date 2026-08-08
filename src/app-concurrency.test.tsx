@@ -207,9 +207,13 @@ describe("source migration concurrency", () => {
     backendMock.probeEnvironment.mockReturnValueOnce(new Promise((resolve) => {
       resolveProbe = resolve;
     }));
-    act(() => container.querySelector<HTMLButtonElement>(
+    const reloadButton = container.querySelector<HTMLButtonElement>(
       'button[aria-label="重新读取 Ghostty 配置"]',
-    )!.click());
+    )!;
+    act(() => reloadButton.click());
+
+    expect(reloadButton.getAttribute("aria-busy")).toBe("true");
+    expect(reloadButton.getAttribute("aria-label")).toBe("正在重新读取 Ghostty 配置…");
 
     const opacity = changeOpacity("77");
     startPendingMigration();
