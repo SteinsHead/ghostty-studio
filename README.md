@@ -4,7 +4,7 @@
   <p><strong>Edit the Ghostty config you actually use—without flattening it.</strong></p>
   <p>
     <a href="https://github.com/SteinsHead/ghostty-studio/releases/tag/v0.4.0">Download for Apple Silicon</a>
-    · <a href="docs/media/ghostty-studio-demo.mp4">Watch the 20-second demo</a>
+    · <a href="docs/media/ghostty-studio-demo.mp4">Watch the demo</a>
     · <a href="README.zh-CN.md">简体中文</a>
   </p>
 

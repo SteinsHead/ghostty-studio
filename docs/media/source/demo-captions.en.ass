@@ -1,0 +1,25 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
+ScaledBorderAndShadow: yes
+WrapStyle: 2
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Title,SF Pro Display,50,&H00F7F8FA,&H000000FF,&H00101217,&H8A080A0E,-1,0,0,0,100,100,0,0,3,1,0,8,170,170,54,1
+Style: Tag,SF Pro Display,23,&H005AF29B,&H000000FF,&H00101217,&HA0080A0E,-1,0,0,0,100,100,1,0,3,1,0,7,138,80,74,1
+Style: Caption,SF Pro Display,34,&H00F4F6F8,&H000000FF,&H00101217,&HC00A0C11,-1,0,0,0,100,100,0,0,3,1,0,2,170,170,24,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 1,0:00:00.20,0:00:02.90,Title,,0,0,0,,{\fad(220,300)}Ghostty Studio\N{\fs28\c&H9BA3AF&}Edit the config you actually use.
+Dialogue: 2,0:00:00.30,0:00:04.30,Caption,,0,0,0,,Meet Ghostty Studio — a local, visual editor for the config you actually use.
+Dialogue: 1,0:00:03.30,0:00:08.60,Tag,,0,0,0,,{\fad(180,220)}LOCAL IMAGE · LIVE PREVIEW
+Dialogue: 2,0:00:04.30,0:00:08.60,Caption,,0,0,0,,Add a background image and preview every change before it touches disk.
+Dialogue: 1,0:00:08.60,0:00:12.50,Tag,,0,0,0,,{\fad(180,220)}VISIBILITY · FIT · POSITION
+Dialogue: 2,0:00:08.60,0:00:12.50,Caption,,0,0,0,,Tune visibility, fit, and position with immediate feedback.
+Dialogue: 1,0:00:12.50,0:00:17.80,Tag,,0,0,0,,{\fad(180,220)}EXACT DIFF · GHOSTTY VALIDATION
+Dialogue: 2,0:00:12.50,0:00:17.80,Caption,,0,0,0,,Then inspect the exact diff, validate it with Ghostty, and save with a restore point.
+Dialogue: 1,0:00:17.80,0:00:22.70,Tag,,0,0,0,,{\fad(180,300)}LOCAL SAVE · RESTORE POINT
+Dialogue: 2,0:00:17.80,0:00:22.70,Caption,,0,0,0,,Your comments, ordering, and config sources stay intact.
