@@ -1,0 +1,9 @@
+Meet Ghostty Studio — a local, visual editor for the config you actually use.
+
+Add a background image and preview every change before it touches disk.
+
+Tune visibility, fit, and position with immediate feedback.
+
+Then inspect the exact diff, validate it with Ghostty, and save with a restore point.
+
+Your comments, ordering, and config sources stay intact.

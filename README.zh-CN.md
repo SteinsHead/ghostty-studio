@@ -4,7 +4,7 @@
   <p><strong>直接可视化编辑正在使用的 Ghostty 配置，保留它原本的样子。</strong></p>
   <p>
     <a href="https://github.com/SteinsHead/ghostty-studio/releases/tag/v0.4.0">下载 Apple Silicon 版本</a>
-    · <a href="docs/media/ghostty-studio-demo.mp4">观看 20 秒演示</a>
+    · <a href="docs/media/ghostty-studio-demo.mp4">观看演示</a>
     · <a href="README.md">English</a>
   </p>
 
