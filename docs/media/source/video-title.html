@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ghostty Studio video title</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
+      body {
+        color: #f7f8f4;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background:
+          radial-gradient(circle at 6% 10%, rgba(168,255,96,.14), transparent 31%),
+          radial-gradient(circle at 88% 82%, rgba(96,80,255,.2), transparent 37%),
+          #090c0e;
+      }
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        opacity: .14;
+        background-image:
+          linear-gradient(rgba(255,255,255,.04) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255,255,255,.04) 1px, transparent 1px);
+        background-size: 52px 52px;
+        mask-image: linear-gradient(90deg, black, transparent 70%);
+      }
+      main {
+        position: relative;
+        width: 1280px;
+        height: 720px;
+        display: grid;
+        grid-template-columns: 520px 1fr;
+        align-items: center;
+        padding-left: 60px;
+      }
+      .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 36px; font-size: 20px; font-weight: 730; }
+      .brand img { width: 40px; height: 40px; border-radius: 11px; box-shadow: 0 0 0 1px rgba(168,255,96,.27); }
+      .eyebrow { color: #a8ff60; font-size: 13px; font-weight: 760; letter-spacing: .13em; text-transform: uppercase; }
+      h1 { width: 540px; margin: 16px 0 22px; font-size: 62px; line-height: .98; letter-spacing: -.06em; }
+      h1 span { color: #a8ff60; }
+      p { width: 455px; margin: 0; color: #adb4ac; font-size: 20px; line-height: 1.45; letter-spacing: -.018em; }
+      .product {
+        position: relative;
+        width: 680px;
+        height: 520px;
+        margin-left: 18px;
+        transform: perspective(1450px) rotateY(-7deg) rotateX(1deg);
+        transform-origin: center left;
+      }
+      .product::before {
+        content: "";
+        position: absolute;
+        inset: 32px 24px 0;
+        background: linear-gradient(130deg, rgba(168,255,96,.3), rgba(91,75,255,.27));
+        filter: blur(50px);
+      }
+      .window {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+        border: 1px solid rgba(255,255,255,.16);
+        border-radius: 20px;
+        background: #17191c;
+        box-shadow: 0 36px 100px rgba(0,0,0,.6), 0 1px rgba(255,255,255,.12) inset;
+      }
+      .window img { display: block; width: 900px; height: auto; }
+      .signal {
+        position: absolute;
+        right: 27px;
+        bottom: 25px;
+        padding: 9px 13px;
+        color: #dcffcb;
+        font-size: 12px;
+        font-weight: 740;
+        border: 1px solid rgba(168,255,96,.26);
+        border-radius: 999px;
+        background: rgba(12,18,13,.84);
+        backdrop-filter: blur(12px);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section>
+        <div class="brand"><img src="/src-tauri/icons/icon.png" alt="" /> Ghostty Studio</div>
+        <div class="eyebrow">Your real config · now visual</div>
+        <h1>Edit Ghostty <span>without flattening it.</span></h1>
+        <p>Open your existing setup, preview the change, inspect the diff, and save with confidence.</p>
+      </section>
+      <section class="product">
+        <div class="window">
+          <img src="/docs/media/source/frame-06-english.jpg" alt="Ghostty Studio" />
+          <div class="signal">LOCAL · PRIVATE · REVERSIBLE</div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
