@@ -4,6 +4,7 @@ import { copyForSetting } from "../settingCopy";
 import type { ConfiguredSetting, RuntimeOption, SettingActivation } from "../types";
 import { isGenericallyEditable } from "../productModel";
 import { localizedSettingChoice } from "../settingChoices";
+import { Disclosure } from "./Disclosure";
 
 interface ReferenceSettingRowProps {
   option: RuntimeOption;
@@ -172,40 +173,40 @@ export function ReferenceSettingRow({
         )}
       </div>
 
-      <details className="reference-setting-row__details">
-        <summary aria-label={text(`查看${copy.label}说明`, `About ${copy.label}`)}>
-          <ChevronRight size={13} /> {text("详情", "Details")}
-        </summary>
-        <div>
-          {detail && (
-            <details className="setting-official-detail">
-              <summary>{text("Ghostty 原文", "Ghostty documentation")}</summary>
-              <p>{detail}</p>
-            </details>
-          )}
-          {!editable && (
-            <p>
-              {duplicated
+      <Disclosure
+        className="reference-setting-row__details"
+        summary={<><ChevronRight size={13} /> {text("详情", "Details")}</>}
+        summaryLabel={text(`查看${copy.label}说明`, `About ${copy.label}`)}
+        bodyClassName="reference-setting-row__body"
+      >
+        {detail && (
+          <details className="setting-official-detail">
+            <summary>{text("Ghostty 原文", "Ghostty documentation")}</summary>
+            <p>{detail}</p>
+          </details>
+        )}
+        {!editable && (
+          <p>
+            {duplicated
+              ? text(
+                  "请在配置文件中合并或编辑这些值。",
+                  "Merge or edit these values in the configuration file.",
+                )
+              : blockedByWorkspace
                 ? text(
-                    "请在配置文件中合并或编辑这些值。",
-                    "Merge or edit these values in the configuration file.",
+                    "选择可写配置后即可调整。",
+                    "Choose a writable configuration to edit this setting.",
                   )
-                : blockedByWorkspace
-                  ? text(
-                      "选择可写配置后即可调整。",
-                      "Choose a writable configuration to edit this setting.",
-                    )
-                  : restrictionDescription(locale, option)}
-            </p>
-          )}
-          {activation && (
-            <p>{text(`更改会在${activation}生效。`, `Changes take effect ${activation}.`)}</p>
-          )}
-          {option.platform && option.capability.reason !== "platform-unavailable" && (
-            <p>{text(`适用于 ${option.platform}。`, `Available on ${option.platform}.`)}</p>
-          )}
-        </div>
-      </details>
+                : restrictionDescription(locale, option)}
+          </p>
+        )}
+        {activation && (
+          <p>{text(`更改会在${activation}生效。`, `Changes take effect ${activation}.`)}</p>
+        )}
+        {option.platform && option.capability.reason !== "platform-unavailable" && (
+          <p>{text(`适用于 ${option.platform}。`, `Available on ${option.platform}.`)}</p>
+        )}
+      </Disclosure>
     </article>
   );
 }

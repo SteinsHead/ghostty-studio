@@ -124,6 +124,10 @@ describe("primary application journey", () => {
     expect(backend.openConfig).toHaveBeenCalledTimes(1);
     expect(backend.openConfig).toHaveBeenCalledWith(preferred.id);
     expect(container.querySelector(".settings-pane")).not.toBeNull();
+    const connection = container.querySelector<HTMLElement>(".connection-state")!;
+    expect(connection.getAttribute("role")).toBe("status");
+    expect(connection.getAttribute("aria-label")).toBe("试用模式");
+    expect(connection.getAttribute("title")).toBe(connection.getAttribute("aria-label"));
     expect(container.textContent).not.toContain("扩展实验室");
     expect(container.textContent).not.toContain("本地工作台");
   });
@@ -157,6 +161,23 @@ describe("primary application journey", () => {
     expect(container.querySelectorAll('[role="dialog"]')).toHaveLength(1);
     expect(container.querySelector('[role="dialog"] h2')?.textContent).toBe("选择写入位置");
     expect(backend.stageChanges).not.toHaveBeenCalled();
+  });
+
+  it("switches dialog content without stacking two modal layers", async () => {
+    const preferred = environment.candidates[0];
+    window.localStorage.setItem("ghostty-studio:preferred-candidate", preferred.id);
+    act(() => root.render(<App />));
+    await settle();
+
+    act(() => container.querySelector<HTMLButtonElement>(".source-context")!.click());
+    const advanced = container.querySelector<HTMLDetailsElement>(".source-advanced")!;
+    act(() => advanced.setAttribute("open", ""));
+    const loadingDetails = [...advanced.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.trim() === "查看加载详情")!;
+    act(() => loadingDetails.click());
+
+    expect(container.querySelectorAll('[role="dialog"]')).toHaveLength(1);
+    expect(container.querySelector('[role="dialog"] h2')?.textContent).toBe("配置来源");
   });
 
   it("keeps the editing journey free of disabled reference controls", async () => {
@@ -212,7 +233,7 @@ describe("primary application journey", () => {
     expect(themeRow.textContent).toContain("这份文件已设置");
     expect(themeRow.textContent).toContain("原值已保留");
     expect(themeRow.textContent).not.toContain("Catppuccin");
-    expect(themeRow.querySelector("input, select, button")).toBeNull();
+    expect(themeRow.querySelector("input, select, .reference-setting-row__state button")).toBeNull();
   });
 
   it("returns unsupported search matches as reference content", async () => {
@@ -221,7 +242,8 @@ describe("primary application journey", () => {
     act(() => root.render(<App />));
     await settle();
 
-    const search = container.querySelector<HTMLInputElement>('input[aria-label="搜索设置"]')!;
+    const search = container.querySelector<HTMLInputElement>('input[aria-label="搜索名称或 Ghostty 配置项"]')!;
+    expect(search.placeholder).toBe("搜索名称或 Ghostty 配置项");
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
     act(() => {
       setter.call(search, "theme");
@@ -231,7 +253,67 @@ describe("primary application journey", () => {
     expect(container.textContent).toContain("全部设置");
     const row = container.querySelector<HTMLElement>(".reference-setting-row")!;
     expect(row.querySelector("code")?.textContent).toBe("theme");
-    expect(row.querySelector("input, select, button")).toBeNull();
+    expect(row.querySelector("input, select, .reference-setting-row__state button")).toBeNull();
+  });
+
+  it("echoes an unmatched query so the empty state is unambiguous", async () => {
+    const preferred = environment.candidates[0];
+    window.localStorage.setItem("ghostty-studio:preferred-candidate", preferred.id);
+    act(() => root.render(<App />));
+    await settle();
+
+    const search = container.querySelector<HTMLInputElement>(
+      'input[aria-label="搜索名称或 Ghostty 配置项"]',
+    )!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    act(() => {
+      setter.call(search, "no-such-ghostty-key");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    expect(container.querySelector(".empty-state")?.textContent)
+      .toContain("没有找到与“no-such-ghostty-key”相关的设置");
+  });
+
+  it("selects the current search with Command-K and clears it with Escape", async () => {
+    const preferred = environment.candidates[0];
+    window.localStorage.setItem("ghostty-studio:preferred-candidate", preferred.id);
+    act(() => root.render(<App />));
+    await settle();
+
+    const search = container.querySelector<HTMLInputElement>('input[aria-label="搜索名称或 Ghostty 配置项"]')!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    act(() => {
+      setter.call(search, "opacity");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+      search.blur();
+    });
+
+    const resultStatus = container.querySelector<HTMLElement>("#search-result-count")!;
+    expect(search.getAttribute("aria-keyshortcuts")).toBe("Meta+K Control+K");
+    expect(search.getAttribute("aria-describedby")).toBe("search-result-count");
+    expect(resultStatus.getAttribute("role")).toBe("status");
+    expect(resultStatus.getAttribute("aria-live")).toBe("polite");
+
+    act(() => window.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "k",
+      metaKey: true,
+      bubbles: true,
+    })));
+
+    expect(document.activeElement).toBe(search);
+    expect(search.selectionStart).toBe(0);
+    expect(search.selectionEnd).toBe("opacity".length);
+
+    act(() => search.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "Escape",
+      bubbles: true,
+    })));
+
+    expect(search.value).toBe("");
+    expect(document.activeElement).toBe(search);
+    expect(search.hasAttribute("aria-describedby")).toBe(false);
+    expect(container.querySelector("#search-result-count")).toBeNull();
   });
 
   it("moves from the complete catalog to the real editor", async () => {
@@ -272,8 +354,8 @@ describe("primary application journey", () => {
       .find((row) => row.querySelector("code")?.textContent === "background")!;
     expect(background).toBeTruthy();
     expect(background.textContent).toContain("多处设置");
-    expect(background.querySelector("input, select, button")).toBeNull();
-    act(() => background.querySelector<HTMLDetailsElement>("details")!.setAttribute("open", ""));
+    expect(background.querySelector("input, select, .reference-setting-row__state button")).toBeNull();
+    act(() => background.querySelector<HTMLButtonElement>(".disclosure-summary")!.click());
     expect(background.textContent).toContain("这份文件中出现了 2 次");
     expect(background.textContent).toContain("请在配置文件中合并或编辑这些值");
   });

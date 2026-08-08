@@ -36,7 +36,7 @@ describe("reference setting states", () => {
     expect(container.textContent).toContain("多处设置");
     expect(container.textContent).toContain("这份文件中出现了 2 次");
     expect(container.textContent).toContain("请在配置文件中合并或编辑这些值");
-    expect(container.querySelector("button")).toBeNull();
+    expect(container.querySelector(".reference-setting-row__state button")).toBeNull();
   });
 
   it("does not offer an adjustment action for a read-only workspace", () => {
@@ -51,6 +51,6 @@ describe("reference setting states", () => {
 
     expect(container.textContent).toContain("配置只读");
     expect(container.textContent).toContain("选择可写配置后即可调整");
-    expect(container.querySelector("button")).toBeNull();
+    expect(container.querySelector(".reference-setting-row__state button")).toBeNull();
   });
 });
