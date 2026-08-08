@@ -1,16 +1,30 @@
 <div align="center">
   <img src="src-tauri/icons/icon.png" width="112" alt="Ghostty Studio 图标" />
   <h1>Ghostty Studio</h1>
-  <p><strong>一个尊重原配置文件的 Ghostty 可视化配置器。</strong></p>
-  <p><a href="README.md">English</a></p>
+  <p><strong>直接可视化编辑正在使用的 Ghostty 配置，保留它原本的样子。</strong></p>
+  <p>
+    <a href="https://github.com/SteinsHead/ghostty-studio/releases/tag/v0.4.0">下载 Apple Silicon 版本</a>
+    · <a href="docs/media/ghostty-studio-demo.mp4">观看 20 秒演示</a>
+    · <a href="README.md">English</a>
+  </p>
 
   [![CI](https://github.com/SteinsHead/ghostty-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/SteinsHead/ghostty-studio/actions/workflows/ci.yml)
   [![License: MIT](https://img.shields.io/badge/License-MIT-a8ff60.svg)](LICENSE)
 </div>
 
-Ghostty 的配置能力很强，但在几百个选项里查名字、手动改文件，并不轻松。
-Ghostty Studio 是我为自己做的本地桌面配置器：打开平时使用的配置，调整设置，确认
-变化，再安心保存。没有改过的内容，它会原样保留。
+<div align="center">
+  <a href="docs/media/ghostty-studio-demo.mp4">
+    <img src="docs/media/ghostty-studio-demo.gif" width="720" alt="Ghostty Studio：实时预览背景修改，检查准确差异，验证并保存" />
+  </a>
+</div>
+
+多数配置器会生成一份新文件。Ghostty Studio 打开你正在使用的那一份，只写入你确认过
+的改动。
+
+- **原配置保持原样。** 注释、顺序、未知设置、空行、BOM、CRLF 和末尾换行风格都会保留。
+- **写入前一目了然。** 先看预览和准确 Diff，再由 Ghostty 验证；需要时还可以从本地快照恢复。
+- **所有内容留在本机。** 不需要账号，没有云服务和遥测，界面也没有通用的文件、网络或
+  shell 访问能力。
 
 ## 能做什么
 

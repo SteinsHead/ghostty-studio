@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ghostty Studio social preview</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
+      body {
+        color: #f7f8f4;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background:
+          radial-gradient(circle at 14% 12%, rgba(164, 255, 96, .15), transparent 32%),
+          radial-gradient(circle at 84% 78%, rgba(112, 97, 255, .2), transparent 38%),
+          #0a0d0f;
+      }
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        opacity: .16;
+        background:
+          linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px);
+        background-size: 48px 48px;
+        mask-image: linear-gradient(90deg, black, transparent 72%);
+      }
+      .canvas {
+        position: relative;
+        width: 1280px;
+        height: 640px;
+        padding: 52px 0 42px 62px;
+        display: grid;
+        grid-template-columns: 520px 1fr;
+        align-items: center;
+        isolation: isolate;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 38px;
+        color: #e8ece4;
+        font-size: 20px;
+        font-weight: 720;
+        letter-spacing: -.02em;
+      }
+      .brand img {
+        width: 38px;
+        height: 38px;
+        border-radius: 10px;
+        box-shadow: 0 0 0 1px rgba(185, 255, 126, .26), 0 10px 28px rgba(0,0,0,.35);
+      }
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 9px;
+        margin-bottom: 15px;
+        color: #a8ff60;
+        font-size: 13px;
+        font-weight: 740;
+        letter-spacing: .13em;
+        text-transform: uppercase;
+      }
+      .eyebrow::before {
+        content: "";
+        width: 23px;
+        height: 2px;
+        background: #a8ff60;
+        border-radius: 999px;
+        box-shadow: 0 0 18px rgba(168,255,96,.55);
+      }
+      h1 {
+        width: 530px;
+        margin: 0;
+        font-size: 58px;
+        line-height: .98;
+        letter-spacing: -.055em;
+        text-wrap: balance;
+      }
+      .accent { color: #a8ff60; }
+      .subhead {
+        width: 465px;
+        margin: 23px 0 28px;
+        color: #aeb5ad;
+        font-size: 20px;
+        line-height: 1.45;
+        letter-spacing: -.018em;
+      }
+      .proof {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        width: 480px;
+      }
+      .proof span {
+        padding: 8px 11px;
+        color: #d7dcd4;
+        font-size: 13px;
+        font-weight: 650;
+        border: 1px solid rgba(255,255,255,.1);
+        border-radius: 9px;
+        background: rgba(255,255,255,.05);
+        box-shadow: inset 0 1px rgba(255,255,255,.04);
+      }
+      .meta {
+        position: absolute;
+        bottom: 40px;
+        left: 62px;
+        color: #788079;
+        font-size: 13px;
+        font-weight: 620;
+        letter-spacing: .025em;
+      }
+      .product {
+        position: relative;
+        width: 780px;
+        height: 505px;
+        margin-left: 22px;
+        transform: perspective(1400px) rotateY(-7deg) rotateX(1deg);
+        transform-origin: center left;
+      }
+      .glow {
+        position: absolute;
+        inset: 24px 20px 6px 20px;
+        background: linear-gradient(125deg, rgba(168,255,96,.28), rgba(102,84,255,.25));
+        filter: blur(48px);
+        opacity: .64;
+      }
+      .window {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+        border: 1px solid rgba(255,255,255,.16);
+        border-radius: 19px;
+        background: #17191c;
+        box-shadow: 0 34px 90px rgba(0,0,0,.58), 0 1px rgba(255,255,255,.12) inset;
+      }
+      .window img {
+        display: block;
+        width: 900px;
+        height: auto;
+        transform: translate(-4px, 0);
+      }
+      .live {
+        position: absolute;
+        right: 28px;
+        bottom: 24px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 9px 12px;
+        color: #dfffd0;
+        font-size: 12px;
+        font-weight: 720;
+        border: 1px solid rgba(168,255,96,.26);
+        border-radius: 999px;
+        background: rgba(17,24,17,.88);
+        backdrop-filter: blur(12px);
+      }
+      .live i {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #a8ff60;
+        box-shadow: 0 0 14px #a8ff60;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="canvas">
+      <section>
+        <div class="brand">
+          <img src="/src-tauri/icons/icon.png" alt="" />
+          <span>Ghostty Studio</span>
+        </div>
+        <div class="eyebrow">Local Ghostty editor</div>
+        <h1>Edit the config you <span class="accent">actually use.</span></h1>
+        <p class="subhead">Visual editing without flattening your comments, ordering, or config sources.</p>
+        <div class="proof">
+          <span>Exact diff</span>
+          <span>Ghostty validation</span>
+          <span>Snapshot recovery</span>
+        </div>
+        <div class="meta">OPEN SOURCE · LOCAL-FIRST · macOS</div>
+      </section>
+      <section class="product" aria-label="Ghostty Studio product interface">
+        <div class="glow"></div>
+        <div class="window">
+          <img src="/docs/media/source/frame-06-english.jpg" alt="Ghostty Studio background editor" />
+          <div class="live"><i></i> Live preview</div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

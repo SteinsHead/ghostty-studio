@@ -1,17 +1,32 @@
 <div align="center">
   <img src="src-tauri/icons/icon.png" width="112" alt="Ghostty Studio icon" />
   <h1>Ghostty Studio</h1>
-  <p><strong>A visual Ghostty configurator that respects your config file.</strong></p>
-  <p><a href="README.zh-CN.md">简体中文</a></p>
+  <p><strong>Edit the Ghostty config you actually use—without flattening it.</strong></p>
+  <p>
+    <a href="https://github.com/SteinsHead/ghostty-studio/releases/tag/v0.4.0">Download for Apple Silicon</a>
+    · <a href="docs/media/ghostty-studio-demo.mp4">Watch the 20-second demo</a>
+    · <a href="README.zh-CN.md">简体中文</a>
+  </p>
 
   [![CI](https://github.com/SteinsHead/ghostty-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/SteinsHead/ghostty-studio/actions/workflows/ci.yml)
   [![License: MIT](https://img.shields.io/badge/License-MIT-a8ff60.svg)](LICENSE)
 </div>
 
-Ghostty is wonderfully configurable. Hunting through hundreds of options and hand-editing a file
-for every small visual change is less wonderful. I built Ghostty Studio so you can open your usual
-config, adjust a setting, see what changed, and save with confidence—without rewriting the rest of
-the file.
+<div align="center">
+  <a href="docs/media/ghostty-studio-demo.mp4">
+    <img src="docs/media/ghostty-studio-demo.gif" width="720" alt="Ghostty Studio: preview a background change, review the exact diff, validate, and save" />
+  </a>
+</div>
+
+Most configurators generate a new file. Ghostty Studio opens the one you already use and changes
+only what you review.
+
+- **Your document stays intact.** Comments, ordering, unknown keys, blank lines, BOM, CRLF, and
+  trailing-newline style are preserved.
+- **You see the write before it happens.** Preview the result, inspect the exact diff, let Ghostty
+  validate it, and recover from a local snapshot when needed.
+- **Your setup stays local.** There is no account, cloud service, telemetry, or general-purpose file,
+  network, and shell access in the webview.
 
 ## What it does
 

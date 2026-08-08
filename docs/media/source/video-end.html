@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ghostty Studio video end card</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
+      body {
+        color: #f6f7f2;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #080b0d;
+      }
+      .backdrop, .veil { position: fixed; inset: 0; }
+      .backdrop {
+        background: url("/docs/media/source/terminal-landscape.png") center/cover;
+        filter: blur(3px) saturate(.78);
+        transform: scale(1.03);
+        opacity: .36;
+      }
+      .veil {
+        background:
+          radial-gradient(circle at 50% 48%, rgba(13,18,22,.25), rgba(4,6,8,.94) 76%),
+          linear-gradient(135deg, rgba(168,255,96,.07), transparent 42%, rgba(105,91,255,.12));
+      }
+      main {
+        position: relative;
+        width: 1280px;
+        height: 720px;
+        display: grid;
+        place-content: center;
+        text-align: center;
+      }
+      .mark {
+        width: 66px;
+        height: 66px;
+        margin: 0 auto 26px;
+        border-radius: 17px;
+        box-shadow: 0 0 0 1px rgba(168,255,96,.28), 0 20px 60px rgba(0,0,0,.52), 0 0 48px rgba(168,255,96,.12);
+      }
+      h1 {
+        margin: 0;
+        font-size: 68px;
+        line-height: 1;
+        letter-spacing: -.06em;
+      }
+      h1 span { color: #a8ff60; }
+      p {
+        margin: 24px 0 34px;
+        color: #b9c0b7;
+        font-size: 21px;
+        font-weight: 520;
+        letter-spacing: -.015em;
+      }
+      .signals {
+        display: flex;
+        justify-content: center;
+        gap: 10px;
+        color: #e1e6df;
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: .035em;
+      }
+      .signals span {
+        padding: 9px 13px;
+        border: 1px solid rgba(255,255,255,.12);
+        border-radius: 999px;
+        background: rgba(8,12,13,.56);
+        backdrop-filter: blur(12px);
+      }
+      .url {
+        margin-top: 42px;
+        color: #a8ff60;
+        font-size: 16px;
+        font-weight: 720;
+        letter-spacing: .01em;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="backdrop"></div>
+    <div class="veil"></div>
+    <main>
+      <img class="mark" src="/src-tauri/icons/icon.png" alt="" />
+      <h1>Your config. <span>Still yours.</span></h1>
+      <p>Visual editing for the Ghostty setup you already trust.</p>
+      <div class="signals">
+        <span>LOCAL</span><span>PRIVATE</span><span>REVERSIBLE</span>
+      </div>
+      <div class="url">github.com/SteinsHead/ghostty-studio</div>
+    </main>
+  </body>
+</html>
