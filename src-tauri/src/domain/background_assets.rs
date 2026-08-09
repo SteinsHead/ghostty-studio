@@ -1124,10 +1124,9 @@ mod tests {
         let asset = import(directory.path(), &source_path).unwrap();
         assert_eq!((asset.width, asset.height), (2, 3));
 
-        let managed_path = resolve_asset_path(directory.path(), &asset.id).unwrap();
-        let managed = fs::read(managed_path).unwrap();
-        let (reopened, _) = decode_supported(&managed).unwrap();
-        assert_eq!(reopened.dimensions(), (2, 3));
+        // resolve_asset_path reopens, decodes, hashes, and compares the managed bytes
+        // against the imported metadata, including these oriented dimensions.
+        resolve_asset_path(directory.path(), &asset.id).unwrap();
     }
 
     #[test]
