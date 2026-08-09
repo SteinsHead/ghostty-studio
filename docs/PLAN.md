@@ -136,7 +136,7 @@ IPC，也没有安装入口。未来开放安装前，必须展示来源、SHA-2
 
 - Ghostty：1.3.1 stable、macOS、精确 schema hash
   `5e36480fe2ec3d510ffc32de84c617fbaca10e1330c097185301b51ab9c10e6c`。
-- Node：22.11.0；使用兼容该版本的 Vite 6，后续建议升级 LTS。
+- Node：22.12.0；使用兼容该版本的 Vite 6，后续建议升级 LTS。
 - Xcode/clang 已具备；已安装并固定 Rust 1.97.1、rustfmt 与 clippy。
 - 自动测试使用临时目录和内存样例，不读取或写入真实用户配置。仓库另含真实离线 Ghostty
   1.3.1 输出 fixture 与 expected contract；上游尾随空格属于 hash 输入，不能清理。

@@ -66,7 +66,7 @@ macOS security review flow; do not disable Gatekeeper. You can also build from s
 
 ## Run from source
 
-You need Ghostty, Xcode Command Line Tools, Node 22.11, pnpm 10, and the pinned Rust toolchain.
+You need Ghostty, Xcode Command Line Tools, Node 22.12.0, pnpm 10, and the pinned Rust toolchain.
 
 ```bash
 pnpm install --frozen-lockfile
