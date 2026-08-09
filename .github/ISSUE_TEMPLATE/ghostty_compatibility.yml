@@ -1,0 +1,100 @@
+name: Ghostty compatibility report
+description: Report a version, setting, source-order, or activation mismatch
+title: "[Compatibility]: "
+labels: []
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form when Ghostty Studio marks a setting read-only unexpectedly, applies the wrong type or range, or disagrees with the installed Ghostty version.
+
+        Do not upload your complete config. Describe source order without paths and use a minimal synthetic fragment only when necessary.
+
+  - type: input
+    id: studio-version
+    attributes:
+      label: Ghostty Studio version
+      placeholder: v0.4.0 or commit SHA
+    validations:
+      required: true
+
+  - type: input
+    id: ghostty-version
+    attributes:
+      label: Exact Ghostty version
+      description: Copy the version shown in Ghostty Studio.
+      placeholder: 1.3.1
+    validations:
+      required: true
+
+  - type: input
+    id: setting-key
+    attributes:
+      label: Ghostty setting key
+      placeholder: background-opacity
+    validations:
+      required: true
+
+  - type: dropdown
+    id: mismatch
+    attributes:
+      label: What appears incorrect?
+      options:
+        - Setting is unexpectedly read-only
+        - Editor type, choices, range, or step
+        - Reload or restart behavior
+        - Written value or removal semantics
+        - Config source or include precedence
+        - Runtime validation result
+        - Other compatibility behavior
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: topology
+    attributes:
+      label: Sanitized config topology
+      description: Select every pattern involved. Do not provide file paths.
+      options:
+        - label: Default macOS config location
+        - label: Default XDG config location
+        - label: One or more includes
+        - label: Multiple default roots or candidate files
+        - label: Dotfiles or symlink-managed configuration
+        - label: I am not sure
+
+  - type: textarea
+    id: observed
+    attributes:
+      label: What Ghostty Studio reports
+      description: Include safe, exact UI text or error codes and the steps that produced them.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Why you expect different behavior
+      description: Link to the relevant Ghostty documentation, source, or release note when available.
+    validations:
+      required: true
+
+  - type: textarea
+    id: minimal-example
+    attributes:
+      label: Minimal synthetic example
+      description: Optional. Include only the setting and source-order lines required to reproduce the mismatch.
+      render: shell
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Safety check
+      options:
+        - label: I tested the latest Ghostty Studio release when possible.
+          required: true
+        - label: I removed paths, usernames, commands, environment values, credentials, and other private data.
+          required: true
+        - label: This is not a security vulnerability or accidental data-exposure report.
+          required: true

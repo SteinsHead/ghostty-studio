@@ -9,7 +9,7 @@
     "type": "git",
     "url": "git+https://github.com/SteinsHead/ghostty-studio.git"
   },
-  "homepage": "https://github.com/SteinsHead/ghostty-studio#readme",
+  "homepage": "https://steinshead.github.io/ghostty-studio/",
   "bugs": "https://github.com/SteinsHead/ghostty-studio/issues",
   "type": "module",
   "scripts": {
@@ -17,11 +17,12 @@
     "build": "tsc --noEmit && vite build",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check:web": "pnpm build && pnpm test",
+    "check:web": "pnpm build && pnpm test && pnpm site:build",
     "check:rust": "cargo fmt --manifest-path src-tauri/Cargo.toml --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --locked -- -D warnings && cargo test --manifest-path src-tauri/Cargo.toml --locked",
     "check": "pnpm check:web && pnpm check:rust",
     "build:app": "pnpm tauri build --bundles app --no-sign --ci -- --locked",
     "package:macos-local": "bash scripts/package-macos-local.sh",
+    "site:build": "node scripts/build-site.mjs",
     "tauri": "tauri"
   },
   "engines": {

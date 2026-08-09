@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/SteinsHead/ghostty-studio/security/advisories/new
+    about: Report vulnerabilities and accidental exposure risks privately.
+  - name: Support guide
+    url: https://github.com/SteinsHead/ghostty-studio/blob/main/SUPPORT.md
+    about: Troubleshoot safely and choose the right report form.
+  - name: Ghostty project
+    url: https://github.com/ghostty-org/ghostty
+    about: Check upstream Ghostty behavior that also occurs without Ghostty Studio.

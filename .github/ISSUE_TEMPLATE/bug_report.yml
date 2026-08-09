@@ -1,0 +1,97 @@
+name: Bug report
+description: Report reproducible behavior in Ghostty Studio
+title: "[Bug]: "
+labels: []
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Ghostty Studio. Search existing issues first.
+
+        **Protect your local data:** do not attach a complete config or unredacted log. Remove usernames, paths, hostnames, commands, environment values, tokens, repository names, terminal content, and image metadata from everything you share. Report security issues [privately](https://github.com/SteinsHead/ghostty-studio/security/advisories/new).
+
+  - type: input
+    id: studio-version
+    attributes:
+      label: Ghostty Studio version
+      description: Use the version shown in the app or release name.
+      placeholder: v0.4.0
+    validations:
+      required: true
+
+  - type: input
+    id: ghostty-version
+    attributes:
+      label: Ghostty version
+      description: Use the version shown in Ghostty Studio.
+      placeholder: 1.3.1
+    validations:
+      required: true
+
+  - type: dropdown
+    id: installation
+    attributes:
+      label: How did you run Ghostty Studio?
+      options:
+        - GitHub release app
+        - Built from source
+        - Browser-only preview
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: macos-version
+    attributes:
+      label: macOS and Mac model
+      description: A general model is enough; do not include a device name or serial number.
+      placeholder: macOS 15.6, MacBook Air with Apple silicon
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Use synthetic names and the smallest sequence that reproduces the issue.
+      placeholder: |
+        1. Open ...
+        2. Change ...
+        3. Choose ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include the exact in-app error code or message when it is safe to share.
+    validations:
+      required: true
+
+  - type: textarea
+    id: minimal-context
+    attributes:
+      label: Minimal sanitized context
+      description: Optional. Share only a synthetic config fragment or redacted screenshot needed to understand the bug—never the complete file.
+      render: shell
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Safety check
+      options:
+        - label: I searched existing issues and tested the latest release when possible.
+          required: true
+        - label: I removed private paths, credentials, commands, terminal content, and other identifying data from this report and its attachments.
+          required: true
+        - label: This is not a security vulnerability or accidental data-exposure report.
+          required: true

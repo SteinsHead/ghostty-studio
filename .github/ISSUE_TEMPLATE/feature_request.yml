@@ -1,0 +1,67 @@
+name: Feature request
+description: Propose a user workflow or product improvement
+title: "[Feature]: "
+labels: []
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the workflow and its value before proposing an implementation. Do not share a real config, private path, terminal screenshot, credential, or other local data.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: Explain the user goal and where the current journey stops working.
+      placeholder: When I ..., I need to ..., so that ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: What would a good outcome look like?
+      description: Describe observable behavior rather than a specific technical design.
+    validations:
+      required: true
+
+  - type: textarea
+    id: current-workaround
+    attributes:
+      label: Current workaround
+      description: Optional. Use synthetic examples and omit private local details.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Product area
+      options:
+        - Configuration discovery and sources
+        - Settings and search
+        - Preview and appearance
+        - Review, validation, and save
+        - Background images
+        - Snapshots and recovery
+        - Accessibility and interaction
+        - Compatibility and upgrades
+        - Extensions and integrations
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: tradeoffs
+    attributes:
+      label: Privacy, safety, or compatibility considerations
+      description: Optional. Note any local-file, network, plugin, upgrade, or accessibility implications you see.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues for the same workflow.
+          required: true
+        - label: This request does not contain real configuration data, credentials, private paths, or identifying terminal content.
+          required: true

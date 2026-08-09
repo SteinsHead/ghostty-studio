@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0a0b0d" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; base-uri 'none'; connect-src 'none'; font-src 'self'; form-action 'none'; frame-src 'none'; img-src 'self' data:; media-src 'self'; object-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self'"
+    />
+    <meta
+      name="description"
+      content="Ghostty Studio is a local visual editor that preserves your existing Ghostty config, previews every change, validates with Ghostty, and saves with a restore point."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Ghostty Studio — edit the config you actually use" />
+    <meta
+      property="og:description"
+      content="A local, lossless visual editor for Ghostty. Preview, review the exact diff, validate, and save safely."
+    />
+    <meta property="og:url" content="https://steinshead.github.io/ghostty-studio/" />
+    <meta
+      property="og:image"
+      content="https://steinshead.github.io/ghostty-studio/assets/ghostty-studio-social-preview.png"
+    />
+    <meta property="og:image:width" content="1280" />
+    <meta property="og:image:height" content="640" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Ghostty Studio" />
+    <meta
+      name="twitter:description"
+      content="Edit the Ghostty config you actually use—without flattening it."
+    />
+    <meta
+      name="twitter:image"
+      content="https://steinshead.github.io/ghostty-studio/assets/ghostty-studio-social-preview.png"
+    />
+    <link rel="canonical" href="https://steinshead.github.io/ghostty-studio/" />
+    <link rel="icon" href="./assets/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./assets/icon.png" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="stylesheet" href="./styles.css" />
+    <title>Ghostty Studio — a safer way to edit Ghostty</title>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "Ghostty Studio",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "macOS 11 or later",
+        "downloadUrl": "https://github.com/SteinsHead/ghostty-studio/releases/latest",
+        "codeRepository": "https://github.com/SteinsHead/ghostty-studio",
+        "license": "https://opensource.org/licenses/MIT",
+        "description": "A local visual editor for the Ghostty config you actually use.",
+        "isAccessibleForFree": true
+      }
+    </script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main" data-i18n="skip">Skip to content</a>
+
+    <div class="ambient ambient-one" aria-hidden="true"></div>
+    <div class="ambient ambient-two" aria-hidden="true"></div>
+
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="Ghostty Studio home" data-i18n-aria-label="brandHome">
+        <img src="./assets/icon.png" width="34" height="34" alt="" />
+        <span>Ghostty Studio</span>
+      </a>
+      <nav class="site-nav" aria-label="Primary navigation" data-i18n-aria-label="primaryNav">
+        <a href="#why" data-i18n="navWhy">Why Studio</a>
+        <a href="#demo" data-i18n="navDemo">Demo</a>
+        <a href="#safety" data-i18n="navSafety">Safety</a>
+        <a href="#roadmap" data-i18n="navRoadmap">Roadmap</a>
+      </nav>
+      <div class="header-actions">
+        <button class="language-button" type="button" data-language-toggle aria-label="切换为中文">
+          <span aria-hidden="true">文</span>
+          <span data-language-label>中文</span>
+        </button>
+        <a
+          class="button button-small button-secondary"
+          href="https://github.com/SteinsHead/ghostty-studio"
+          data-i18n="github"
+        >GitHub</a>
+        <a
+          class="button button-small button-primary"
+          href="https://github.com/SteinsHead/ghostty-studio/releases/latest"
+          data-i18n="downloadShort"
+        >Download</a>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="hero" id="top">
+        <div class="hero-copy reveal">
+          <p class="eyebrow"><span class="status-dot"></span><span data-i18n="eyebrow">LOCAL · LOSSLESS · REVIEWED</span></p>
+          <h1 data-i18n-html="heroTitle">Your Ghostty config,<br /><span>without the config-file anxiety.</span></h1>
+          <p class="hero-lede" data-i18n="heroLede">
+            Open the config you already use. Tune it visually, inspect the exact diff, let Ghostty
+            validate it, and save with a restore point.
+          </p>
+          <div class="hero-actions">
+            <a
+              class="button button-primary button-large"
+              href="https://github.com/SteinsHead/ghostty-studio/releases/latest"
+            >
+              <span data-i18n="download">Download for Apple Silicon</span>
+              <span aria-hidden="true">↗</span>
+            </a>
+            <a class="button button-quiet button-large" href="#demo">
+              <span class="play-mark" aria-hidden="true">▶</span>
+              <span data-i18n="watch">Watch 23-second demo</span>
+            </a>
+          </div>
+          <p class="release-note" data-i18n="releaseNote">Early preview · macOS 11+ · MIT licensed</p>
+        </div>
+
+        <div class="hero-stage reveal" data-reveal-delay="1">
+          <div class="stage-halo" aria-hidden="true"></div>
+          <div class="app-frame">
+            <div class="window-bar" aria-hidden="true">
+              <span class="traffic red"></span>
+              <span class="traffic yellow"></span>
+              <span class="traffic green"></span>
+              <span class="window-title">Ghostty Studio</span>
+            </div>
+            <video
+              data-hero-video
+              muted
+              autoplay
+              loop
+              playsinline
+              preload="metadata"
+              poster="./assets/ghostty-studio-social-preview.png"
+              aria-label="Ghostty Studio product demonstration"
+              data-i18n-aria-label="productDemo"
+            >
+              <source src="./assets/ghostty-studio-demo.mp4" type="video/mp4" />
+              <track
+                kind="captions"
+                label="English"
+                srclang="en"
+                src="./assets/demo-captions.en.vtt"
+              />
+            </video>
+            <button
+              class="stage-playback"
+              type="button"
+              data-video-toggle
+              aria-label="Pause product demonstration"
+            >
+              <span data-video-toggle-icon aria-hidden="true">Ⅱ</span>
+            </button>
+          </div>
+          <div class="stage-note note-top">
+            <span class="note-icon" aria-hidden="true">✓</span>
+            <span data-i18n="calloutPreserve">Comments and ordering preserved</span>
+          </div>
+          <div class="stage-note note-bottom">
+            <span class="note-icon note-icon-shield" aria-hidden="true">◇</span>
+            <span data-i18n="calloutLocal">No account. No telemetry.</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="trust-strip" aria-label="Product principles" data-i18n-aria-label="principles">
+        <span data-i18n="trustLocal">Runs locally</span>
+        <span class="trust-separator" aria-hidden="true"></span>
+        <span data-i18n="trustExisting">Edits your existing file</span>
+        <span class="trust-separator" aria-hidden="true"></span>
+        <span data-i18n="trustGhostty">Validated by Ghostty</span>
+        <span class="trust-separator" aria-hidden="true"></span>
+        <span data-i18n="trustOpen">Open source</span>
+      </section>
+
+      <section class="section section-problem" id="why">
+        <div class="section-heading reveal">
+          <p class="eyebrow" data-i18n="problemEyebrow">THE FILE IS THE PRODUCT</p>
+          <h2 data-i18n="problemTitle">A configurator should respect the config you wrote.</h2>
+          <p data-i18n="problemLede">
+            Most visual editors regenerate a clean file. Ghostty Studio changes only the settings you
+            review and leaves the rest exactly where you put it.
+          </p>
+        </div>
+
+        <div class="comparison reveal" data-reveal-delay="1">
+          <article class="comparison-card comparison-before">
+            <div class="comparison-label"><span aria-hidden="true">×</span><span data-i18n="before">Typical generator</span></div>
+            <pre aria-label="Regenerated configuration example" data-i18n-aria-label="generatedExample"><code><span class="muted"># personal notes</span>
+<span class="removed">- font-family = Berkeley Mono</span>
+<span class="removed">- # keep this for work</span>
+<span class="removed">- config-file = work.conf</span>
+
+<span class="added">+ font-family = Berkeley Mono</span>
+<span class="added">+ background-opacity = 0.88</span></code></pre>
+            <p data-i18n="beforeCopy">The setting is right, but the document is no longer yours.</p>
+          </article>
+          <article class="comparison-card comparison-after">
+            <div class="comparison-label"><span aria-hidden="true">✓</span><span data-i18n="after">Ghostty Studio</span></div>
+            <pre aria-label="Preserved configuration example" data-i18n-aria-label="preservedExample"><code><span class="muted"># personal notes</span>
+font-family = Berkeley Mono
+<span class="muted"># keep this for work</span>
+config-file = work.conf
+<span class="added">+ background-opacity = 0.88</span></code></pre>
+            <p data-i18n="afterCopy">One reviewed change. Everything else remains byte-for-byte familiar.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" id="demo">
+        <div class="section-heading section-heading-centered reveal">
+          <p class="eyebrow" data-i18n="demoEyebrow">ONE CALM JOURNEY</p>
+          <h2 data-i18n="demoTitle">Adjust. Review. Save. Recover if you need to.</h2>
+          <p data-i18n="demoLede">The preview moves quickly. Your real config never does.</p>
+        </div>
+
+        <div class="demo-shell reveal" data-reveal-delay="1">
+          <video
+            controls
+            playsinline
+            preload="metadata"
+            poster="./assets/ghostty-studio-social-preview.png"
+            aria-label="Full Ghostty Studio demonstration with English captions"
+            data-i18n-aria-label="fullDemo"
+          >
+            <source src="./assets/ghostty-studio-demo.mp4" type="video/mp4" />
+            <track
+              kind="captions"
+              label="English"
+              srclang="en"
+              src="./assets/demo-captions.en.vtt"
+            />
+            <span data-i18n="videoFallback">Your browser cannot play the demo video.</span>
+          </video>
+        </div>
+
+        <ol class="journey-grid">
+          <li class="journey-card reveal">
+            <span class="journey-number">01</span>
+            <h3 data-i18n="journeyOpen">Open what is real</h3>
+            <p data-i18n="journeyOpenCopy">Studio finds macOS and XDG candidates and opens the right source when there is nothing to decide.</p>
+          </li>
+          <li class="journey-card reveal" data-reveal-delay="1">
+            <span class="journey-number">02</span>
+            <h3 data-i18n="journeyTune">Tune with context</h3>
+            <p data-i18n="journeyTuneCopy">Visual controls appear where they help. Reference details stay one disclosure away.</p>
+          </li>
+          <li class="journey-card reveal" data-reveal-delay="2">
+            <span class="journey-number">03</span>
+            <h3 data-i18n="journeyReview">Review the exact write</h3>
+            <p data-i18n="journeyReviewCopy">A human summary and the raw diff show precisely what will change before confirmation.</p>
+          </li>
+          <li class="journey-card reveal" data-reveal-delay="3">
+            <span class="journey-number">04</span>
+            <h3 data-i18n="journeySave">Save with a way back</h3>
+            <p data-i18n="journeySaveCopy">Ghostty validates the candidate and Studio creates a private restore point before replacing the file.</p>
+          </li>
+        </ol>
+      </section>
+
+      <section class="section feature-section">
+        <div class="section-heading reveal">
+          <p class="eyebrow" data-i18n="featureEyebrow">BUILT FOR REAL SETUPS</p>
+          <h2 data-i18n="featureTitle">Simple on the surface. Careful underneath.</h2>
+        </div>
+        <div class="feature-grid">
+          <article class="feature-card feature-wide reveal">
+            <div class="feature-icon" aria-hidden="true">▧</div>
+            <div>
+              <h3 data-i18n="featureBackground">A background studio, not a path field</h3>
+              <p data-i18n="featureBackgroundCopy">Import private PNG or JPEG images, preview fit and position, adjust visibility, and switch between a small local library.</p>
+            </div>
+            <div class="position-control" aria-hidden="true">
+              <span></span><span></span><span></span><span></span><span class="active"></span><span></span><span></span><span></span><span></span>
+            </div>
+          </article>
+          <article class="feature-card reveal" data-reveal-delay="1">
+            <div class="feature-icon" aria-hidden="true">⌘</div>
+            <h3 data-i18n="featureRuntime">Learns from your Ghostty</h3>
+            <p data-i18n="featureRuntimeCopy">The settings catalog comes from the Ghostty version installed on your machine, not a stale copied list.</p>
+          </article>
+          <article class="feature-card reveal" data-reveal-delay="2">
+            <div class="feature-icon" aria-hidden="true">⇄</div>
+            <h3 data-i18n="featureSources">Understands multiple sources</h3>
+            <p data-i18n="featureSourcesCopy">Studio distinguishes the file you selected from the later include that may win, then verifies saved values with Ghostty.</p>
+          </article>
+          <article class="feature-card reveal" data-reveal-delay="1">
+            <div class="feature-icon" aria-hidden="true">文</div>
+            <h3 data-i18n="featureLanguage">English and 简体中文</h3>
+            <p data-i18n="featureLanguageCopy">Follow the system language or switch instantly. Labels are written for people, while technical keys remain available.</p>
+          </article>
+          <article class="feature-card feature-wide reveal" data-reveal-delay="2">
+            <div class="feature-icon" aria-hidden="true">◇</div>
+            <div>
+              <h3 data-i18n="featureUpgrade">Upgrade-aware by default</h3>
+              <p data-i18n="featureUpgradeCopy">Writable behavior is matched to a reviewed Ghostty contract. Unknown versions fail closed instead of guessing at write semantics.</p>
+            </div>
+            <div class="contract-chip" aria-hidden="true"><span></span>Ghostty 1.3.1 · reviewed</div>
+          </article>
+        </div>
+      </section>
+
+      <section class="section safety-section" id="safety">
+        <div class="safety-copy reveal">
+          <p class="eyebrow" data-i18n="safetyEyebrow">LOCAL MEANS LOCAL</p>
+          <h2 data-i18n="safetyTitle">The safest network request is the one the app never makes.</h2>
+          <p data-i18n="safetyLede">
+            Ghostty Studio has no account, cloud service, telemetry, or general-purpose network, shell,
+            and filesystem access in its webview.
+          </p>
+          <a class="text-link" href="https://github.com/SteinsHead/ghostty-studio/blob/main/docs/THREAT_MODEL.md">
+            <span data-i18n="threatModel">Read the threat model</span><span aria-hidden="true">↗</span>
+          </a>
+        </div>
+        <div class="safety-stack reveal" data-reveal-delay="1">
+          <article>
+            <span class="safety-mark" aria-hidden="true">1</span>
+            <div><h3 data-i18n="safeOpaque">Fixed write targets</h3><p data-i18n="safeOpaqueCopy">Rust binds a fixed write target to the current session. The interface cannot submit an arbitrary path.</p></div>
+          </article>
+          <article>
+            <span class="safety-mark" aria-hidden="true">2</span>
+            <div><h3 data-i18n="safeConflict">External-change protection</h3><p data-i18n="safeConflictCopy">Revision checks stop a stale draft from overwriting edits made by another process.</p></div>
+          </article>
+          <article>
+            <span class="safety-mark" aria-hidden="true">3</span>
+            <div><h3 data-i18n="safeAtomic">Validated, atomic writes</h3><p data-i18n="safeAtomicCopy">Ghostty checks the candidate; Studio snapshots, fsyncs, and replaces the target atomically.</p></div>
+          </article>
+          <article>
+            <span class="safety-mark" aria-hidden="true">4</span>
+            <div><h3 data-i18n="safeImages">Private image handling</h3><p data-i18n="safeImagesCopy">Images are bounded, normalized, stripped of metadata, and stored with private permissions.</p></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="section architecture-section">
+        <div class="section-heading section-heading-centered reveal">
+          <p class="eyebrow" data-i18n="architectureEyebrow">A SMALL TRUSTED CORE</p>
+          <h2 data-i18n="architectureTitle">Presentation can change. Safety rules do not.</h2>
+        </div>
+        <div class="architecture-map reveal" data-reveal-delay="1" role="img" aria-label="Ghostty Studio architecture layers" data-i18n-aria-label="architectureLabel">
+          <div class="architecture-node">
+            <span>01</span><strong data-i18n="archUi">React interface</strong><small data-i18n="archUiCopy">Untrusted presentation</small>
+          </div>
+          <span class="architecture-arrow" aria-hidden="true">→</span>
+          <div class="architecture-node architecture-node-accent">
+            <span>02</span><strong data-i18n="archIpc">Typed Tauri boundary</strong><small data-i18n="archIpcCopy">Allowlisted commands</small>
+          </div>
+          <span class="architecture-arrow" aria-hidden="true">→</span>
+          <div class="architecture-node">
+            <span>03</span><strong data-i18n="archRust">Rust services</strong><small data-i18n="archRustCopy">Parse · validate · write · recover</small>
+          </div>
+          <span class="architecture-arrow" aria-hidden="true">→</span>
+          <div class="architecture-node">
+            <span>04</span><strong data-i18n="archGhostty">Ghostty + your file</strong><small data-i18n="archGhosttyCopy">The final source of truth</small>
+          </div>
+        </div>
+        <p class="architecture-link reveal">
+          <a class="text-link" href="https://github.com/SteinsHead/ghostty-studio/blob/main/docs/ARCHITECTURE.md">
+            <span data-i18n="architectureLink">Explore the architecture and invariants</span><span aria-hidden="true">↗</span>
+          </a>
+        </p>
+      </section>
+
+      <section class="section roadmap-section" id="roadmap">
+        <div class="roadmap-card reveal">
+          <div>
+            <p class="eyebrow" data-i18n="roadmapEyebrow">EARLY PREVIEW, CLEAR DIRECTION</p>
+            <h2 data-i18n="roadmapTitle">Depth before checkbox count.</h2>
+            <p data-i18n="roadmapLede">The next milestones expand effective-value insight, recovery, compatibility, and specialized editors without weakening the save contract.</p>
+          </div>
+          <div class="roadmap-list">
+            <div><span class="roadmap-state complete" aria-hidden="true">✓</span><span data-i18n="roadmapNow">Lossless editing, review, validation, snapshots, local images</span></div>
+            <div><span class="roadmap-state active" aria-hidden="true"></span><span data-i18n="roadmapNext">Richer effective-value and recovery center</span></div>
+            <div><span class="roadmap-state" aria-hidden="true"></span><span data-i18n="roadmapLater">Specialized editors and declarative extension packs</span></div>
+            <div><span class="roadmap-state" aria-hidden="true"></span><span data-i18n="roadmapRelease">Notarized and broader platform releases</span></div>
+          </div>
+          <a class="button button-secondary" href="https://github.com/SteinsHead/ghostty-studio/blob/main/docs/ROADMAP.md">
+            <span data-i18n="roadmapLink">Read the roadmap</span><span aria-hidden="true">↗</span>
+          </a>
+        </div>
+      </section>
+
+      <section class="section faq-section">
+        <div class="section-heading reveal">
+          <p class="eyebrow" data-i18n="faqEyebrow">GOOD TO KNOW</p>
+          <h2 data-i18n="faqTitle">Before you download.</h2>
+        </div>
+        <div class="faq-list">
+          <details class="reveal">
+            <summary data-i18n="faqOfficial">Is this an official Ghostty project?</summary>
+            <p data-i18n="faqOfficialCopy">No. Ghostty Studio is an independent community project and is not affiliated with or endorsed by Ghostty.</p>
+          </details>
+          <details class="reveal" data-reveal-delay="1">
+            <summary data-i18n="faqPlatforms">Which platforms are supported?</summary>
+            <p data-i18n="faqPlatformsCopy">The current preview targets Apple Silicon Macs on macOS 11 or later. Linux and Intel support require their own tested platform contracts before release.</p>
+          </details>
+          <details class="reveal" data-reveal-delay="2">
+            <summary data-i18n="faqNotarized">Why does macOS show a first-launch warning?</summary>
+            <p data-i18n="faqNotarizedCopy">The preview is ad-hoc signed but not Apple-notarized. The release includes a SHA-256 checksum, and you can build from source.</p>
+          </details>
+          <details class="reveal" data-reveal-delay="3">
+            <summary data-i18n="faqSettings">Why are some Ghostty settings reference-only?</summary>
+            <p data-i18n="faqSettingsCopy">Repeatable, sensitive, and source-dependent settings need specialized write semantics. Studio shows them honestly instead of guessing.</p>
+          </details>
+        </div>
+      </section>
+
+      <section class="final-cta reveal">
+        <img src="./assets/icon.png" width="72" height="72" alt="" />
+        <p class="eyebrow" data-i18n="ctaEyebrow">YOUR CONFIG. STILL YOURS.</p>
+        <h2 data-i18n="ctaTitle">Make Ghostty feel like home.</h2>
+        <p data-i18n="ctaCopy">Then save only when everything looks right.</p>
+        <div class="hero-actions">
+          <a class="button button-primary button-large" href="https://github.com/SteinsHead/ghostty-studio/releases/latest">
+            <span data-i18n="download">Download for Apple Silicon</span><span aria-hidden="true">↗</span>
+          </a>
+          <a class="button button-secondary button-large" href="https://github.com/SteinsHead/ghostty-studio">
+            <span data-i18n="starGithub">Star on GitHub</span><span aria-hidden="true">☆</span>
+          </a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="brand footer-brand">
+        <img src="./assets/icon.png" width="30" height="30" alt="" />
+        <span>Ghostty Studio</span>
+      </div>
+      <p data-i18n="footerCopy">Local by design. Open source under MIT.</p>
+      <nav aria-label="Footer navigation" data-i18n-aria-label="footerNav">
+        <a href="https://github.com/SteinsHead/ghostty-studio">GitHub</a>
+        <a href="https://github.com/SteinsHead/ghostty-studio/releases" data-i18n="releases">Releases</a>
+        <a href="https://github.com/SteinsHead/ghostty-studio/issues" data-i18n="issues">Issues</a>
+        <a href="https://github.com/SteinsHead/ghostty-studio/blob/main/SECURITY.md" data-i18n="security">Security</a>
+      </nav>
+    </footer>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

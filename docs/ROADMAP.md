@@ -1,92 +1,67 @@
-# 路线图
+# Roadmap · 路线图
 
-Ghostty Studio 会先把最常用的配置旅程做深，再逐步扩展可编辑范围，而不是一次性把所有
-Ghostty 设置塞进表单。每个阶段都以“用户能否理解、保存并恢复”为完成条件，功能数量
-排在其后。
+Ghostty Studio will deepen the most common configuration journeys before widening the setting count.
+每个阶段都以“能理解、能验证、能恢复”为完成条件，不按功能数量判断进度。
 
-路线图会随 Ghostty 和真实使用反馈调整；没有列入“当前已具备”的能力，都不应被界面或
-发布说明提前承诺。
+Items outside **Now** are directions, not release promises. Compatibility is earned by tests against
+real Ghostty versions and platforms.
 
-## 当前已具备：安全纵向切片
+## Now · make the current journey dependable
 
-- 从本机 Ghostty 读取版本与设置目录，并按精确版本和 schema hash 匹配可写行为 overlay；
-- 发现 macOS/XDG 配置候选，使用 opaque session 打开固定目标；
-- 无默认配置时，经双重探测、原生确认、dirfd/no-follow 和 exclusive-create 创建固定的
-  0 字节候选；竞争层或验证不确定时保留真实文件并刷新状态；
-- 无损保留注释、顺序、未知行、BOM、CRLF 和末尾换行风格；
-- 草稿、模拟终端预览、后端 diff、Ghostty 校验、原生确认与显式保存；
-- revision 冲突检查、私有快照、原子写入、写后完整图校验和 revision-aware 恢复；
-- 脱敏来源观察图；在 merge/reset 语义未知时不宣称它是最终生效值；
-- 本地 PNG/JPEG 私有图片库、多图导入与手动/随机切换、图片呈现控制和安全实时预览；
-- 严格的 JSON extension manifest 后端校验契约；当前没有面向普通用户的扩展界面，也不
-  安装或执行扩展；
-- 无账号、云服务或遥测，WebView 没有通用文件系统、网络或 shell 能力。
+- Keep opening, source choice, search, draft, review, save, activation, and restore coherent in both
+  Simplified Chinese and English.
+- Preserve comments, ordering, unknown lines, BOM, CRLF, and trailing-newline style while editing the
+  reviewed scalar set.
+- Keep source-sensitive writes gated to a proven Ghostty contract; explain every read-only state next
+  to the affected action.
+- Finish the local PNG/JPEG background journey: import, select, fit, position, repeat, opacity, safe
+  preview, exact diff, deletion protection, and recovery behavior.
+- Maintain keyboard access, visible focus, live status, usable narrow layouts, reduced motion, and no
+  flashing during continuous controls.
+- Publish a truthful compatibility guide, troubleshooting path, real demo, checksums, and limitations.
 
-当前仍是 macOS 优先的早期预览。模拟预览不是 Ghostty 真实渲染，可写设置只覆盖经过审计
-的一小组普通标量。
+## Next · survive upgrades and complex configs
 
-## v0.2：打开即编辑，按需打断
+- Model the complete versioned load graph, including default roots, include queue order, repeated
+  values, reset behavior, and authoritative final-value sources.
+- Add an upgrade summary for added, removed, and behaviorally changed settings; never guess a
+  migration.
+- Build one recovery center for outside edits, expired reviews, validation failures, uncertain writes,
+  and snapshot restore.
+- Add purpose-built editors for repeatable values, shortcuts, themes, paths, and other settings whose
+  semantics cannot fit a generic control.
+- Expand cross-version fixtures, concurrent-edit and fault-injection tests, parser property/fuzz
+  coverage, and end-to-end save/restore tests.
+- Provide a managed overlay only after the app can prove where it belongs in the effective load graph.
 
-- 通常直接回到上次使用的配置和设置上下文，不让用户先经过状态页或欢迎页；
-- 只有首次使用、多个可写来源、缺少配置、发生冲突或需要恢复时，才展示相应决策流程；
-- 设置按日常任务组织，技术键名、来源图和诊断放在按需展开的详细信息中；
-- 仅在视觉设置相关页面展示上下文预览，避免让预览长期占用编辑空间；
-- 用常驻于当前任务附近的草稿提示串起“调整 → 检查 → 保存”，保存前展示人能读懂的
-  变更摘要，并保留原始 diff 供核对；
-- 把配置层值、来源观察和最终生效值分开表达，消除看似准确的默认值回退；
-- 完成来源切换、草稿保留/丢弃、离开提醒和检查请求防竞态；
-- 保存和恢复期间提供不可重复提交的进度状态；遇到外部编辑时先保留磁盘内容，再重放兼容
-  草稿；
-- 统一错误语言：说明发生了什么、文件是否安全、用户下一步能做什么；
-- 改善中文搜索、自然语言标签、空状态、键盘焦点、live status、点击目标、对比度和
-  `prefers-reduced-motion`；
-- 用桌面端、浏览器预览和窄窗口场景回归滚动、弹窗、模拟预览稳定性与核心旅程。
+## Later · earn platform and ecosystem breadth
 
-这一阶段的验收基线在[产品体验与平台边界](PRODUCT_EXPERIENCE.md)中维护。
+- Ship Developer ID signed, notarized, stapled macOS artifacts with a tested upgrade and rollback path;
+  add Intel only with a published support matrix.
+- Evaluate Linux after its config paths, permissions, packaging, desktop integration, and real-device
+  journeys pass the same release gates. Windows is not currently promised.
+- Add declarative presets and extension packs with visible source, integrity, capability, conflict,
+  version pinning, disable, rollback, and removal behavior. Executable plugins remain out of scope by
+  default.
+- Consider HTTPS image download only after a separate network threat model covers redirects,
+  private-address blocking, tracking, content limits, caching, credentials, consent, and cleanup.
+- Add profiles and reversible migration guides once source and recovery semantics are complete.
 
-## 下一阶段：生效值、恢复中心与升级韧性
+## Release gates
 
-- 实现版本匹配的完整加载图，覆盖 include 队列顺序、重复值、reset 和 merge 语义；
-- 为每个设置展示最终生效值、来源链、被覆盖定义和可信度，而不是用单文件值代替；
-- 建立统一恢复中心：外部冲突、失效会话、Ghostty 校验失败、写后不确定状态和快照恢复；
-- 引入逐设置能力指纹（发现、编辑、预览、迁移）和行为契约版本，减少整体 schema hash
-  变化造成的不必要降级；
-- 提供 Ghostty 升级摘要，列出新增、移除和行为待复核的设置；不自动猜测迁移；
-- 增加跨版本 fixture、并发/故障注入、parser property/fuzz 测试，以及写入和恢复状态机
-  的端到端覆盖；
-- 在完整来源计算和恢复流程完成后，提供可审查的托管 overlay，用于 dotfiles 工作流。
+Every milestone must satisfy all of these:
 
-## 再下一阶段：专用编辑体验与声明式生态
+1. **No silent data loss:** unrelated bytes survive; stale revisions and rollback paths are tested.
+2. **No hidden write:** real changes remain drafts until exact review, Ghostty validation, and explicit
+   confirmation.
+3. **No false certainty:** simulation, observed source, and verified effective value stay distinct.
+4. **Recoverable failure:** the app says what happened to the file and offers a safe next action.
+5. **Fail-closed upgrades:** unproven setting or source behavior becomes read-only.
+6. **Accessible core journey:** keyboard, focus, status, contrast, target size, zoom, reduced motion,
+   scroll, dialogs, and continuous-control stability are regressed.
+7. **Explainable supply chain:** artifact origin, architecture, checksum, signature, notarization,
+   dependencies, and future extension integrity are visible.
 
-- 为主题、字体、快捷键、重复值、路径与敏感设置提供专用编辑器和独立风险说明；
-- 在独立网络威胁模型完成后，评估仅限 HTTPS 图片直链的一次性下载；需要登录、Header、
-  Token 或 JSON 解析的图片 API 只通过声明式 provider 与系统凭据存储接入；
-- 加入 profiles、可比较的预设草稿和声明式、可逆迁移向导；
-- 建立 extension pack 的隔离存储、来源/哈希摘要、权限确认、启用/停用、版本固定、回滚和
-  卸载；
-- 在信任与撤销模型成熟后再评估公共 registry；扩展默认继续保持无代码执行；
-- 为社区 metadata 与核心行为 overlay 建立命名空间、所有权和逐设置冲突规则；
-- 建立可维护的国际化层，提供英文界面，并允许扩展贡献受约束的本地化文本。
-
-完整扩展边界见[扩展 manifest 契约](EXTENSIONS.md)。
-
-## 发布质量与跨平台
-
-- Developer ID 签名、公证、stapling、Gatekeeper 验证和安全签名更新链路；
-- SBOM、依赖与许可证审计、固定 lockfile、构建 provenance 和可复现发布流程；
-- Apple Silicon/Intel 支持矩阵，以及在 CI 和真实设备上的升级/降级验证；
-- Linux 文件位置、权限和桌面集成适配，通过支持矩阵后再发布 AppImage/deb/rpm；
-- 崩溃恢复和脱敏诊断导出；遥测保持默认关闭，任何网络能力都需要独立设计与用户同意。
-
-## 每个里程碑的发布门槛
-
-1. **不会丢配置：** 无损往返、未知内容保留、外部 revision 冲突和失败回滚有自动测试。
-2. **不会夸大事实：** 模拟预览、来源图和最终生效值的边界在界面中可见；扩展契约的
-   当前能力在开发文档中写清楚。
-3. **不会悄悄写入：** 所有真实变更都有草稿、准确 diff、Ghostty 校验和明确确认。
-4. **可以恢复：** 失败状态说明磁盘结果并给出可执行的下一步；快照恢复遵循同样的写入保护。
-5. **升级时关闭风险：** 不匹配的 Ghostty 契约默认只读，兼容性未证明前不猜测编辑或迁移。
-6. **核心旅程可访问：** 键盘、焦点、状态消息、目标尺寸、缩放和减少动态效果经过回归。
-7. **供应链可说明：** 发布资产、依赖和未来扩展都有来源、完整性与版本信息。
-
-更细的工程分解见[实施方案](PLAN.md)，安全不变量见[威胁模型](THREAT_MODEL.md)。
+See [Compatibility](COMPATIBILITY.md), [Product experience](PRODUCT_EXPERIENCE.md),
+[Architecture](ARCHITECTURE.md), and [Threat model](THREAT_MODEL.md) for the contracts behind these
+gates.
