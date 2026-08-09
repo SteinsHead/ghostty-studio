@@ -14,6 +14,12 @@ active configuration graph, the setting stays visible but read-only.
 | Any other version, channel, platform, or schema hash | Read-only | The runtime catalog may remain searchable, but every write surface is disabled from schema load. There is no per-setting fallback authorization. |
 | Browser demo | Read-only | It uses sample data and never reads or writes a local Ghostty configuration. |
 
+The lockfile currently retains `glib` 0.18.5 through Tauri's Linux GTK dependency graph. That version
+is covered by [GHSA-wrw7-89jp-8q8g](https://github.com/advisories/GHSA-wrw7-89jp-8q8g). It is not
+compiled into the supported Apple Silicon macOS target, and the alert remains open rather than being
+dismissed. A Linux build must not be released until the upstream dependency graph reaches a patched
+`glib` version and Linux CI verifies the resulting package.
+
 The audited contract is `ghostty-1.3.1-stable-macos-v1`. Its schema hash is
 `5e36480fe2ec3d510ffc32de84c617fbaca10e1330c097185301b51ab9c10e6c`, calculated from the complete
 raw `ghostty +show-config --default --docs` output. It exposes 30 ordinary scalar controls plus the
@@ -73,6 +79,9 @@ Preview releases publish a checksum, but the current app does not yet establish 
 publisher identity and is not notarized. Download only from the project's
 [GitHub Releases](https://github.com/SteinsHead/ghostty-studio/releases), verify the checksum, and do
 not use repackaged downloads.
+
+Future published releases are immutable: their assets and associated tags cannot be replaced after
+publication. A release must therefore be assembled and reviewed as a draft before it is published.
 
 CI runs frontend and Rust checks on Ubuntu, dependency review on pull requests, and an ARM64 app build
 smoke test on `macos-15`. Workflow actions are pinned to immutable commits. Both the smoke build and
