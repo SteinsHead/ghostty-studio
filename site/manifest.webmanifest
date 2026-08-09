@@ -1,0 +1,16 @@
+{
+  "name": "Ghostty Studio",
+  "short_name": "Ghostty Studio",
+  "description": "A local visual editor for the Ghostty config you actually use.",
+  "start_url": "./",
+  "display": "browser",
+  "background_color": "#0a0b0d",
+  "theme_color": "#0a0b0d",
+  "icons": [
+    {
+      "src": "./assets/icon.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

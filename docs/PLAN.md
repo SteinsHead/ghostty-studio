@@ -131,7 +131,7 @@ schema 以 Ghostty 版本和输出 hash 为缓存键。stderr 与 exit code 分�
 - Xcode/clang 已具备；已安装并固定 Rust 1.97.1、rustfmt 与 clippy。
 - 自动测试使用临时目录和内存样例，不读取或写入真实配置内容。
 
-## 九、当前实现进度（2026-08-04）
+## 九、当前实现进度（验证于 2026-08-09）
 
 - **Phase 0 已完成：** 技术选型、ADR、威胁模型、CSP、窄 IPC 与声明式扩展契约。
 - **Phase 1 已形成可运行纵向切片：** Ghostty 探测、无损文档、revision、官方校验、
@@ -142,7 +142,7 @@ schema 以 Ghostty 版本和输出 hash 为缓存键。stderr 与 exit code 分�
   raw 专家编辑器和托管 overlay 尚未实现。
 - **Phase 3 已完成基础契约：** extension manifest 有严格 schema、capability allowlist 和
   核心键覆盖规则；它目前仅供后端与开发者使用，应用内没有扩展安装、管理或执行界面。
-- **Phase 4 尚未完成：** 当前有 51 个 Rust 测试、45 个前端测试、clippy、生产构建、
+- **Phase 4 尚未完成：** 当前有 94 个 Rust 测试、104 个前端测试、clippy、生产构建、
   真实 Tauri 启动冒烟，以及通过严格完整性和 DMG 校验的 macOS ad-hoc 本地包；仍需
   fuzz、跨版本 fixture、Linux CI、Developer ID 签名、公证、SBOM 和更新器。
 

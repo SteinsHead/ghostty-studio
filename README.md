@@ -3,139 +3,98 @@
   <h1>Ghostty Studio</h1>
   <p><strong>Edit the Ghostty config you actually use—without flattening it.</strong></p>
   <p>
-    <a href="https://github.com/SteinsHead/ghostty-studio/releases/tag/v0.4.0">Download for Apple Silicon</a>
-    · <a href="docs/media/ghostty-studio-demo.mp4">Watch the demo</a>
+    <a href="https://steinshead.github.io/ghostty-studio/">Website</a>
+    · <a href="https://github.com/SteinsHead/ghostty-studio/releases/latest">Download for Apple Silicon</a>
+    · <a href="docs/media/ghostty-studio-demo.mp4">Watch the 23-second demo</a>
     · <a href="README.zh-CN.md">简体中文</a>
   </p>
 
   [![CI](https://github.com/SteinsHead/ghostty-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/SteinsHead/ghostty-studio/actions/workflows/ci.yml)
+  [![Release](https://img.shields.io/github/v/release/SteinsHead/ghostty-studio?include_prereleases&color=a8ff60)](https://github.com/SteinsHead/ghostty-studio/releases/latest)
   [![License: MIT](https://img.shields.io/badge/License-MIT-a8ff60.svg)](LICENSE)
 </div>
 
 <div align="center">
   <a href="docs/media/ghostty-studio-demo.mp4">
-    <img src="docs/media/ghostty-studio-demo.gif" width="720" alt="Ghostty Studio: preview a background change, review the exact diff, validate, and save" />
+    <img src="docs/media/ghostty-studio-demo.gif" width="720" alt="Ghostty Studio imports a local background, previews the result, reviews the exact diff, validates with Ghostty, and saves" />
   </a>
 </div>
 
-Most configurators generate a new file. Ghostty Studio opens the one you already use and changes
-only what you review.
+Most configurators generate a clean new file. Ghostty Studio opens the one you already maintain and
+changes only what you review.
 
-- **Your document stays intact.** Comments, ordering, unknown keys, blank lines, BOM, CRLF, and
-  trailing-newline style are preserved.
-- **You see the write before it happens.** Preview the result, inspect the exact diff, let Ghostty
-  validate it, and recover from a local snapshot when needed.
-- **Your setup stays local.** There is no account, cloud service, telemetry, or general-purpose file,
-  network, and shell access in the webview.
+- **Preserves your document.** Comments, ordering, includes, unknown keys, line endings, and blank
+  lines stay where you put them.
+- **Makes every write visible.** Preview the result and inspect the exact diff before anything reaches
+  disk.
+- **Asks Ghostty, then leaves a way back.** Ghostty validates the candidate and Studio creates a local
+  restore point before saving.
+- **Stays on your Mac.** No account, cloud service, telemetry, or remote image loading.
 
-## What it does
+## Current support
 
-- Opens your last-used config straight into the editor when there is nothing to decide.
-- Reads the settings catalog from the Ghostty version installed on your machine.
-- Finds macOS and XDG config candidates, and asks you to choose only when more than one can be used.
-- Creates a new config safely, after confirmation, when no default config exists.
-- Lets you search and edit supported settings, with a contextual preview for visual changes.
-- Imports local PNG and JPEG backgrounds into a private image library, with multi-select, manual or
-  random switching, fit, position, tiling, visibility, and live preview controls.
-- Distinguishes the file you are editing from Ghostty's effective source, offers the winning include
-  when a later file would override a draft, and verifies saved scalar values with Ghostty itself.
-- Follows your system language by default, with instant Simplified Chinese and English switching.
-- Keeps the main journey focused on settings you can change, while the full Ghostty catalog remains
-  available as a clear, searchable reference.
-- Keeps every edit in a draft until you review the exact diff and choose to save.
-- Preserves comments, ordering, unknown keys, blank lines, BOM, CRLF, and trailing-newline style.
-- Validates with Ghostty and creates a local snapshot before every save.
+| | Preview support |
+|---|---|
+| Mac | Apple Silicon, macOS 11 or later |
+| Ghostty | Writable contract audited against Ghostty 1.3.1 |
+| Languages | English and Simplified Chinese |
+| Distribution | Ad-hoc signed, not Apple-notarized |
 
-Everything stays on your machine. There is no account, cloud service, telemetry, or general-purpose
-shell and file access in the webview.
+Read the exact version and configuration boundaries in the
+[compatibility guide](docs/COMPATIBILITY.md).
+
+## The journey
+
+1. **Open the real source.** Studio discovers the standard macOS and XDG roots, follows supported
+   includes, and explains when another source wins.
+2. **Adjust with context.** Search reviewed settings or use the background studio for local PNG and
+   JPEG images, fit, position, tiling, visibility, and switching.
+3. **Review the write.** Nothing leaves the draft until you inspect its summary and exact diff.
+4. **Validate and save.** Studio checks for outside edits, asks the installed Ghostty to validate,
+   writes atomically, and keeps a private restore point.
+
+Settings whose type, range, source behavior, or version contract is not yet proven remain searchable
+but read-only. Studio does not guess at write semantics.
 
 ## Download
 
-[Download Ghostty Studio v0.4.0](https://github.com/SteinsHead/ghostty-studio/releases/tag/v0.4.0)
-for Apple Silicon Macs running macOS 11 or later.
+[Download the latest preview](https://github.com/SteinsHead/ghostty-studio/releases/latest) for an
+Apple Silicon Mac running macOS 11 or later. The release page includes a SHA-256 checksum.
 
-This is an early preview. The app is ad-hoc signed but not Apple-notarized, so macOS may ask you to
-confirm the first launch. The release page includes a SHA-256 checksum; you can also build directly
-from source if you prefer.
+macOS may ask you to confirm the first launch because the preview is not notarized. Use the normal
+macOS security review flow; do not disable Gatekeeper. You can also build from source.
 
-## Project status
+## Run from source
 
-Ghostty Studio is an early preview. The source is ready to explore, but a few limits are intentional:
-
-- The desktop app currently targets macOS and the writable contract is tested against Ghostty 1.3.1.
-- Ghostty 1.3.1 on macOS currently has 31 reviewed settings you can change. The rest remain
-  searchable and explain why they need a different editing experience.
-- The terminal preview is a safe DOM simulation. Studio models Ghostty 1.3.1's default roots and
-  mutable global include/reset queue for reviewed scalar writes. Source-dependent writes fail closed
-  on versions that have not passed the same compatibility audit; repeatable and unaudited semantics
-  stay read-only.
-- The extension manifest format and validator are developer-facing contracts for now. There is no
-  extension browser, installer, or execution surface in the app.
-- The preview download is ad-hoc signed, not Developer ID signed or notarized.
-- The interface is available in Simplified Chinese and English.
-
-## Run locally
-
-You will need macOS 11 or later, Ghostty, Xcode Command Line Tools, Node 22.11, pnpm 10, and Rust.
-The repository pins the expected Node and Rust versions.
+You need Ghostty, Xcode Command Line Tools, Node 22.11, pnpm 10, and the pinned Rust toolchain.
 
 ```bash
 pnpm install --frozen-lockfile
 pnpm tauri dev
 ```
 
-To open the read-only browser preview instead:
-
-```bash
-pnpm dev
-```
-
-Run the full frontend and Rust checks:
+Run the complete frontend, website, and Rust checks with:
 
 ```bash
 pnpm check
 ```
 
-Build an ad-hoc signed app and a local DMG:
+`pnpm dev` opens a read-only browser demo with sample data. `pnpm package:macos-local` creates an
+ad-hoc local package for development; it does not establish publisher identity.
 
-```bash
-pnpm package:macos-local
-```
+## Documentation and help
 
-The local package is for development and personal installation; it is not notarized and does not
-establish publisher identity.
-
-## How saving works
-
-Ghostty Studio edits the existing document instead of regenerating it. A save only touches the
-settings you reviewed. Before replacing the file, the app checks for outside changes, asks Ghostty
-to validate the candidate, and stores a restorable snapshot.
-
-If no default config exists, the app can create one fixed empty target. The backend re-discovers the
-target before and after confirmation and uses no-follow directory descriptors plus exclusive `0600`
-creation on Unix. If final validation becomes uncertain, it preserves the file and re-reads reality;
-it never risks deleting a concurrently replaced user file as an automatic cleanup step.
-
-The deeper design and security details live in the documentation:
-
+- [Documentation index](docs/README.md)
+- [Compatibility](docs/COMPATIBILITY.md)
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Architecture](docs/ARCHITECTURE.md)
-- [Product experience and platform boundaries](docs/PRODUCT_EXPERIENCE.md)
-- [Product design principles](docs/product-design.md)
 - [Threat model](docs/THREAT_MODEL.md)
-- [Extension design](docs/EXTENSIONS.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Security policy](SECURITY.md)
-- [Changelog](CHANGELOG.md)
-- [Third-party notices](THIRD_PARTY_NOTICES.md)
 
-## Contributing
+Bug reports, focused pull requests, and real Ghostty workflow feedback are welcome. Start with
+[Support](SUPPORT.md) or [Contributing](CONTRIBUTING.md), and use only synthetic or fully redacted
+configs, paths, logs, and media.
 
-Bug reports, focused pull requests, and feedback about real Ghostty workflows are welcome. Please
-use redacted sample configs—never attach tokens, private paths, commands, or environment values.
-
-## License
-
-[MIT](LICENSE)
-
-Ghostty Studio is an independent community project and is not affiliated with or endorsed by
-Ghostty.
+Ghostty Studio is open source under the [MIT license](LICENSE). It is an independent community
+project and is not affiliated with or endorsed by Ghostty.

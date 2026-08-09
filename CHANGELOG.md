@@ -4,6 +4,19 @@ Ghostty Studio follows semantic versioning while the project is in preview.
 
 ## Unreleased
 
+### Added
+
+- Add a bilingual, responsive, no-tracking product website with a captioned real-product demo,
+  honest compatibility limits, and automatic GitHub Pages deployment.
+- Add compatibility and troubleshooting guides, contribution and support paths, structured issue
+  forms, a pull-request checklist, and dependency update automation.
+
+### Changed
+
+- Refocus both READMEs on the user journey, current platform support, and the latest release while
+  moving implementation detail into the documentation center.
+- Organize the public roadmap around Now, Next, Later, and explicit release gates.
+
 ## 0.4.0 — 2026-08-06
 
 ### Added
