@@ -72,11 +72,17 @@ impl ExecutableIdentity {
         require_bounded_regular_executable(&before)?;
 
         let mut digest = Sha256::new();
-        let bytes_read = std::io::copy(
-            &mut file.by_ref().take(MAX_EXECUTABLE_BYTES.saturating_add(1)),
-            &mut digest,
-        )
-        .map_err(identity_io_error)?;
+        let mut reader = file.by_ref().take(MAX_EXECUTABLE_BYTES.saturating_add(1));
+        let mut buffer = [0_u8; 64 * 1024];
+        let mut bytes_read = 0_u64;
+        loop {
+            let read = reader.read(&mut buffer).map_err(identity_io_error)?;
+            if read == 0 {
+                break;
+            }
+            digest.update(&buffer[..read]);
+            bytes_read = bytes_read.saturating_add(read as u64);
+        }
         if bytes_read != before.len() || bytes_read > MAX_EXECUTABLE_BYTES {
             return Err(CommandError::new(
                 "ghostty_identity_unavailable",
