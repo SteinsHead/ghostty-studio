@@ -1,0 +1,210 @@
+{
+  "fps": 60,
+  "width": 1600,
+  "height": 900,
+  "frames": 1392,
+  "events": [
+    {
+      "frame": 77,
+      "action": "hover",
+      "target": "Add images",
+      "rect": {
+        "height": 32,
+        "width": 113.484375,
+        "x": 976.015625,
+        "y": 158
+      },
+      "text": "Add images",
+      "x": 1032.7578125,
+      "y": 174,
+      "hotspot": {
+        "x": 1032.7578125,
+        "y": 174
+      }
+    },
+    {
+      "frame": 240,
+      "action": "click",
+      "target": "Add images",
+      "rect": {
+        "height": 32,
+        "width": 113.484375,
+        "x": 976.015625,
+        "y": 158
+      },
+      "text": "Add images",
+      "x": 1032.7578125,
+      "y": 174,
+      "hotspot": {
+        "x": 1032.7578125,
+        "y": 174
+      }
+    },
+    {
+      "frame": 401,
+      "action": "hover",
+      "target": "Image visibility slider",
+      "rect": {
+        "height": 24,
+        "width": 453.34375,
+        "x": 371.5,
+        "y": 502.03125
+      },
+      "hotspot": {
+        "x": 598.171875,
+        "y": 514.03125
+      }
+    },
+    {
+      "frame": 533,
+      "action": "drag",
+      "target": "Image visibility slider",
+      "rect": {
+        "height": 24,
+        "width": 453.34375,
+        "x": 371.5,
+        "y": 502.03125
+      },
+      "hotspot": {
+        "x": 471.235625,
+        "y": 514.03125
+      },
+      "value": "44%"
+    },
+    {
+      "frame": 563,
+      "type": "hover",
+      "target": "Fill and crop",
+      "hotspot": {
+        "x": 1035.3359375,
+        "y": 501.03125
+      },
+      "rect": {
+        "height": 36,
+        "width": 108.328125,
+        "x": 981.171875,
+        "y": 483.03125
+      }
+    },
+    {
+      "frame": 564,
+      "type": "click",
+      "target": "Fill and crop",
+      "hotspot": {
+        "x": 1035.3359375,
+        "y": 501.03125
+      },
+      "rect": {
+        "height": 36,
+        "width": 108.328125,
+        "x": 981.171875,
+        "y": 483.03125
+      }
+    },
+    {
+      "frame": 671,
+      "type": "hover",
+      "target": "Bottom right",
+      "hotspot": {
+        "x": 465.828125,
+        "y": 703.03125
+      },
+      "rect": {
+        "height": 30,
+        "width": 34,
+        "x": 448.828125,
+        "y": 688.03125
+      }
+    },
+    {
+      "frame": 672,
+      "type": "click",
+      "target": "Bottom right",
+      "hotspot": {
+        "x": 465.828125,
+        "y": 703.03125
+      },
+      "rect": {
+        "height": 30,
+        "width": 34,
+        "x": 448.828125,
+        "y": 688.03125
+      }
+    },
+    {
+      "frame": 791,
+      "type": "hover",
+      "target": "Review & save",
+      "hotspot": {
+        "x": 1022.89453125,
+        "y": 855
+      },
+      "rect": {
+        "height": 32,
+        "width": 124.2109375,
+        "x": 960.7890625,
+        "y": 839
+      }
+    },
+    {
+      "frame": 792,
+      "type": "click",
+      "target": "Review & save",
+      "hotspot": {
+        "x": 1022.89453125,
+        "y": 855
+      },
+      "rect": {
+        "height": 32,
+        "width": 124.2109375,
+        "x": 960.7890625,
+        "y": 839
+      }
+    },
+    {
+      "frame": 971,
+      "type": "hover",
+      "target": "Save",
+      "hotspot": {
+        "x": 1080.99609375,
+        "y": 656.5
+      },
+      "rect": {
+        "height": 32,
+        "width": 52.0078125,
+        "x": 1054.9921875,
+        "y": 640.5
+      }
+    },
+    {
+      "frame": 1002,
+      "type": "click",
+      "target": "Save",
+      "hotspot": {
+        "x": 1080.99609375,
+        "y": 656.5
+      },
+      "rect": {
+        "height": 32,
+        "width": 52.0078125,
+        "x": 1054.9921875,
+        "y": 640.5
+      }
+    },
+    {
+      "frame": 1079,
+      "type": "hover",
+      "target": "macOS · config",
+      "hotspot": {
+        "x": 111.5,
+        "y": 825.75
+      },
+      "rect": {
+        "height": 38.5,
+        "width": 203,
+        "x": 10,
+        "y": 806.5
+      }
+    }
+  ]
+}

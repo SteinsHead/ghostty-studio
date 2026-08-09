@@ -139,6 +139,10 @@ describe("background image editor", () => {
     expect(container.querySelector<HTMLInputElement>('.background-control input[type="number"]')?.value).toBe("150");
     expect(container.querySelector<HTMLInputElement>('.background-control input[type="range"]')?.value).toBe("1.5");
     expect(container.querySelector<HTMLInputElement>('.background-control input[type="range"]')?.getAttribute("aria-valuetext")).toBe("150%");
+    const fitRadios = container.querySelectorAll<HTMLButtonElement>('.fit-options [role="radio"]');
+    expect(fitRadios).toHaveLength(4);
+    expect(fitRadios[1].getAttribute("aria-checked")).toBe("true");
+    expect(fitRadios[1].tabIndex).toBe(0);
     expect(container.querySelectorAll('.position-grid [role="radio"]')).toHaveLength(9);
     expect(container.querySelectorAll('.background-asset[role="radio"]')).toHaveLength(2);
     expect(container.textContent).not.toContain("/Users/");
@@ -152,6 +156,12 @@ describe("background image editor", () => {
       bubbles: true,
     })));
     expect(onSelect).toHaveBeenCalledWith(assets[1].id);
+
+    act(() => fitRadios[1].dispatchEvent(new KeyboardEvent("keydown", {
+      key: "ArrowRight",
+      bubbles: true,
+    })));
+    expect(onChange).toHaveBeenCalledWith("background-image-fit", "stretch");
 
     const positionRadios = container.querySelectorAll<HTMLButtonElement>('.position-grid [role="radio"]');
     expect(positionRadios[8].tabIndex).toBe(0);

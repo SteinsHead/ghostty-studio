@@ -1,6 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { demoEnvironment, demoSchema, demoSnapshots } from "./demo";
-import { isBackgroundSetting } from "./backgroundImageModel";
+import { assetIdFromBackgroundValue, isBackgroundSetting } from "./backgroundImageModel";
+import {
+  holdRecordingTransition,
+  recordingDemoAsset,
+  recordingDemoEnabled,
+  recordingDemoPreviewUrl,
+} from "./recordingDemo";
 import type {
   Backend,
   BackgroundAssetImportResult,
@@ -85,6 +91,19 @@ class TauriBackend implements Backend {
 }
 
 class BrowserDemoBackend implements Backend {
+  private recordingRevision = 0;
+  private recordingValues = Object.fromEntries(
+    demoSchema.options
+      .filter((option) => option.editable)
+      .map((option) => [option.key, [...option.currentValues]]),
+  );
+  private recordingBackgroundImage: ConfigSession["backgroundImage"] = {
+    kind: "none",
+    assetId: null,
+  };
+  private recordingAssets: BackgroundAssetSummary[] = [];
+  private recordingStage: DraftChange[] = [];
+
   async probeEnvironment(): Promise<EnvironmentReport> {
     return structuredClone(demoEnvironment);
   }
@@ -147,16 +166,21 @@ class BrowserDemoBackend implements Backend {
   async openConfig(candidateId: string): Promise<ConfigSession> {
     const candidate = demoEnvironment.candidates.find((item) => item.id === candidateId);
     if (!candidate) throw new Error("Unknown demo config candidate");
-    const values = Object.fromEntries(
-      demoSchema.options
-        .filter((option) => option.editable)
-        .map((option) => [option.key, option.currentValues]),
-    );
+    const values = recordingDemoEnabled
+      ? structuredClone(this.recordingValues)
+      : Object.fromEntries(
+        demoSchema.options
+          .filter((option) => option.editable)
+          .map((option) => [option.key, option.currentValues]),
+      );
+    const backgroundImage = recordingDemoEnabled
+      ? structuredClone(this.recordingBackgroundImage)
+      : { kind: "none" as const, assetId: null };
     return {
       id: `demo-${candidateId}`,
       candidateId,
-      revision: "demo-revision",
-      readOnly: true,
+      revision: `demo-revision-${this.recordingRevision}`,
+      readOnly: !recordingDemoEnabled,
       values,
       configuredSettings: demoSchema.options.filter((option) => !isBackgroundSetting(option.key)).map((option) => ({
         key: option.key,
@@ -164,11 +188,13 @@ class BrowserDemoBackend implements Backend {
         valueExposure: option.editable ? "available" : "protected",
       })),
       unrecognizedSettingCount: 0,
-      diagnostics: ["浏览器预览模式固定为只读。请运行 Tauri 应用以访问本地文件。"],
-      backgroundImage: { kind: "none", assetId: null },
+      diagnostics: recordingDemoEnabled
+        ? ["Synthetic recording session. No local files are read or written."]
+        : ["浏览器预览模式固定为只读。请运行 Tauri 应用以访问本地文件。"],
+      backgroundImage,
       effectiveValuesKnown: true,
       effectiveValues: structuredClone(values),
-      effectiveBackgroundImage: { kind: "none", assetId: null },
+      effectiveBackgroundImage: structuredClone(backgroundImage),
       settingEffects: {},
     };
   }
@@ -182,6 +208,8 @@ class BrowserDemoBackend implements Backend {
     revision: string,
     changes: DraftChange[],
   ): Promise<ChangePreview> {
+    if (recordingDemoEnabled) this.recordingStage = structuredClone(changes);
+    await holdRecordingTransition();
     const activationRank = {
       unknown: 0,
       reload: 1,
@@ -217,8 +245,38 @@ class BrowserDemoBackend implements Backend {
     };
   }
 
-  async applyChanges(): Promise<ApplyResult> {
-    throw new Error("浏览器演示模式禁止写入本地配置");
+  async applyChanges(
+    _sessionId: string,
+    _revision: string,
+    token: string,
+  ): Promise<ApplyResult> {
+    if (!recordingDemoEnabled) throw new Error("浏览器演示模式禁止写入本地配置");
+    if (token !== "demo-stage") throw new Error("The synthetic review is no longer current");
+
+    await holdRecordingTransition();
+
+    for (const change of this.recordingStage) {
+      if (change.key === "background-image") {
+        const assetId = assetIdFromBackgroundValue(change.after[0]);
+        this.recordingBackgroundImage = assetId
+          ? { kind: "managed", assetId }
+          : { kind: "none", assetId: null };
+        continue;
+      }
+      if (change.after.length === 0) delete this.recordingValues[change.key];
+      else this.recordingValues[change.key] = [...change.after];
+    }
+    this.recordingStage = [];
+    this.recordingRevision += 1;
+    return {
+      revision: `demo-revision-${this.recordingRevision}`,
+      snapshotId: "3e924c40-a2b3-4a19-8b16-0be34d01fb52",
+      diagnostics: [],
+      warnings: [],
+      reloadRequired: false,
+      activation: "reload",
+      effectiveStatus: "verified",
+    };
   }
 
   async listSnapshots(_sessionId: string): Promise<SnapshotInfo[]> {
@@ -230,19 +288,29 @@ class BrowserDemoBackend implements Backend {
   }
 
   async listBackgroundAssets(): Promise<BackgroundAssetSummary[]> {
-    return [];
+    return recordingDemoEnabled ? structuredClone(this.recordingAssets) : [];
   }
 
   async chooseBackgroundImages(): Promise<BackgroundAssetImportResult> {
-    throw new Error("浏览器演示模式不能访问本地图片");
+    if (!recordingDemoEnabled) throw new Error("浏览器演示模式不能访问本地图片");
+    this.recordingAssets = [structuredClone(recordingDemoAsset)];
+    return {
+      canceled: false,
+      assets: structuredClone(this.recordingAssets),
+      rejected: [],
+    };
   }
 
-  async getBackgroundAssetPreview(): Promise<BackgroundAssetPreview> {
-    throw new Error("浏览器演示模式不能访问本地图片");
+  async getBackgroundAssetPreview(assetId: string): Promise<BackgroundAssetPreview> {
+    if (!recordingDemoEnabled || assetId !== recordingDemoAsset.id) {
+      throw new Error("浏览器演示模式不能访问本地图片");
+    }
+    return { assetId, dataUrl: recordingDemoPreviewUrl };
   }
 
-  async deleteBackgroundAsset(): Promise<void> {
-    throw new Error("浏览器演示模式不能删除本地图片");
+  async deleteBackgroundAsset(assetId: string): Promise<void> {
+    if (!recordingDemoEnabled) throw new Error("浏览器演示模式不能删除本地图片");
+    this.recordingAssets = this.recordingAssets.filter((asset) => asset.id !== assetId);
   }
 }
 
