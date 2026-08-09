@@ -36,8 +36,10 @@ artifact for 14 days; it cannot upload release assets.
 3. Download the artifact and verify `SHA256SUMS.txt` with `shasum -a 256 -c SHA256SUMS.txt`.
 4. Compare `BUILD-MANIFEST.txt` with the requested ref, inspect the app on an Apple Silicon Mac, and
    repeat the privacy checklist in [Launch kit](LAUNCH_KIT.md).
-5. Publish separately only after the artifact, release notes, compatibility statement, and known
-   limits have been reviewed.
+5. Create a draft GitHub Release, attach the reviewed DMG, checksum, build manifest, release notes,
+   compatibility statement, and known limits, then verify the complete draft.
+6. Publish the draft only when every asset is final. The repository enforces immutable releases, so
+   the published assets and associated tag cannot be replaced.
 
 A future public-release workflow needs a protected environment, Developer ID credentials,
 notarization, stapling, publisher verification, and an explicit approval step. Those capabilities must
