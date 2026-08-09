@@ -22,6 +22,8 @@ interface I18nContextValue {
   text(zhCN: string, en: string, replacements?: Replacements): string;
 }
 
+export type LocalizedText = I18nContextValue["text"];
+
 function interpolate(template: string, replacements?: Replacements): string {
   if (!replacements) return template;
   return template.replace(/\{(\w+)\}/g, (match, key: string) => (

@@ -20,7 +20,7 @@
     "check:web": "pnpm build && pnpm test && pnpm site:build",
     "check:rust": "cargo fmt --manifest-path src-tauri/Cargo.toml --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --locked -- -D warnings && cargo test --manifest-path src-tauri/Cargo.toml --locked",
     "check": "pnpm check:web && pnpm check:rust",
-    "build:app": "pnpm tauri build --bundles app --no-sign --ci -- --locked",
+    "build:app": "bash scripts/build-macos-app.sh",
     "package:macos-local": "bash scripts/package-macos-local.sh",
     "site:build": "node scripts/build-site.mjs",
     "tauri": "tauri"

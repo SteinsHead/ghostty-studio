@@ -10,7 +10,6 @@ const backendMock = vi.hoisted(() => ({
   probeEnvironment: vi.fn(),
   loadRuntimeSchema: vi.fn(),
   loadConfigGraph: vi.fn(),
-  inspectExtensionManifest: vi.fn(),
   openConfig: vi.fn(),
   createConfig: vi.fn(),
   stageChanges: vi.fn(),
@@ -47,7 +46,6 @@ function sessionFor(candidate: ConfigCandidate): ConfigSession {
   return {
     id: `session-${candidate.id}`,
     candidateId: candidate.id,
-    path: candidate.path,
     revision: `revision-${candidate.id}`,
     readOnly: false,
     values,

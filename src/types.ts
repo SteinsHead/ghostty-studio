@@ -41,16 +41,13 @@ export interface SettingCapability {
 
 export interface GhosttyProbe {
   available: boolean;
-  executablePath: string | null;
   version: string | null;
   channel: string | null;
-  rawVersion: string | null;
 }
 
 export interface ConfigCandidate {
   id: string;
   label: string;
-  path: string;
   source: "xdg" | "macos" | "include" | "custom";
   format: "legacy" | "ghostty";
   priority: number;
@@ -58,6 +55,7 @@ export interface ConfigCandidate {
   writable: boolean;
   symlink: boolean;
   sizeBytes: number | null;
+  creationEligible: boolean;
 }
 
 export interface SettingEffect {
@@ -100,7 +98,6 @@ export interface RuntimeSchema {
 export interface ConfigSession {
   id: string;
   candidateId: string;
-  path: string;
   revision: string;
   readOnly: boolean;
   values: Record<string, string[]>;
@@ -254,22 +251,10 @@ export interface SnapshotInfo {
   sizeBytes: number;
 }
 
-export interface ExtensionInspection {
-  id: string;
-  name: string;
-  version: string;
-  capabilities: string[];
-  settingCount: number;
-  presetCount: number;
-  migrationCount: number;
-  trusted: boolean;
-}
-
 export interface Backend {
   probeEnvironment(): Promise<EnvironmentReport>;
   loadRuntimeSchema(): Promise<RuntimeSchema>;
   loadConfigGraph(): Promise<ConfigGraph>;
-  inspectExtensionManifest(manifest: string): Promise<ExtensionInspection>;
   openConfig(candidateId: string): Promise<ConfigSession>;
   createConfig(candidateId: string, locale?: "zh-CN" | "en"): Promise<ConfigSession>;
   stageChanges(

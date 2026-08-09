@@ -10,14 +10,29 @@ active configuration graph, the setting stays visible but read-only.
 | macOS 11 or later, Apple Silicon | Early-preview release | The published app is built for Apple Silicon. It is ad-hoc signed, not Apple-notarized. |
 | Intel Mac | Not released | No supported Intel package or tested upgrade path yet. |
 | Linux and Windows | Not released | The architecture is portable, but there is no supported desktop build or platform compatibility claim. |
-| Ghostty 1.3.1 on macOS | Audited | Source ordering, schema fingerprints, final scalar verification, and the reviewed editor set are tested against this exact version. |
-| Ghostty 1.3.x with matching per-setting fingerprints | Partial | Unchanged reviewed scalar controls may remain available. Changed settings become read-only. Source-sensitive writes still require the exact audited source-order contract. |
-| Other Ghostty versions | Reference only unless the app says otherwise | The runtime catalog may still be searchable, but editing is not assumed safe. |
+| Ghostty 1.3.1, stable channel, macOS, exact schema hash | Audited | The exact runtime contract enables the reviewed editor set and write pipeline. |
+| Any other version, channel, platform, or schema hash | Read-only | The runtime catalog may remain searchable, but every write surface is disabled from schema load. There is no per-setting fallback authorization. |
 | Browser demo | Read-only | It uses sample data and never reads or writes a local Ghostty configuration. |
 
-The audited Ghostty 1.3.1 catalog currently exposes 30 ordinary scalar controls plus the dedicated
-background-image editor. Unknown, sensitive, repeatable, or behaviorally complex settings remain
-searchable reference entries until they have a purpose-built editor and write contract.
+The audited contract is `ghostty-1.3.1-stable-macos-v1`. Its schema hash is
+`5e36480fe2ec3d510ffc32de84c617fbaca10e1330c097185301b51ab9c10e6c`, calculated from the complete
+raw `ghostty +show-config --default --docs` output. It exposes 30 ordinary scalar controls plus the
+dedicated `background-image` editor. Unknown, sensitive, repeatable, or behaviorally complex settings
+remain searchable reference entries.
+
+Runtime-schema refresh, Stage, Apply, and Restore are serialized. Stage freezes the audited option
+contract for the reviewed keys; Apply reloads and compares it before and after native confirmation.
+An upgrade cannot silently reuse an earlier review.
+
+## Offline compatibility evidence
+
+The repository includes a real offline Ghostty 1.3.1 macOS output fixture and an expected contract in
+[`src-tauri/tests/fixtures/ghostty/1.3.1-macos`](../src-tauri/tests/fixtures/ghostty/1.3.1-macos/).
+The fixture is compared byte-for-byte. Upstream trailing spaces are part of the schema hash; editors,
+formatters, and cleanup scripts must not remove them.
+
+CI is the source of truth for current test totals. The compatibility contract is accepted only when
+the schema hash, option count, writable-key/editor set, and contract id all match.
 
 ## Configuration layouts
 
@@ -58,6 +73,12 @@ Preview releases publish a checksum, but the current app does not yet establish 
 publisher identity and is not notarized. Download only from the project's
 [GitHub Releases](https://github.com/SteinsHead/ghostty-studio/releases), verify the checksum, and do
 not use repackaged downloads.
+
+CI runs frontend and Rust checks on Ubuntu, dependency review on pull requests, and an ARM64 app build
+smoke test on `macos-15`. Workflow actions are pinned to immutable commits. Both the smoke build and
+the manual [Release candidate workflow](RELEASING.md) use the same path-remapped, credential-scanned
+app builder. The candidate workflow produces an ARM64 Actions artifact and build evidence for review;
+it does not publish a release or change the ad-hoc signing and notarization status.
 
 ## Report a compatibility gap
 

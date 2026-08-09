@@ -1,17 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GhosttyProbe {
-    pub available: bool,
-    pub executable_path: Option<String>,
-    pub version: Option<String>,
-    pub channel: Option<String>,
-    pub raw_version: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct ConfigCandidate {
     pub id: String,
     pub label: String,
@@ -27,6 +16,29 @@ pub struct ConfigCandidate {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PublicGhosttyInfo {
+    pub available: bool,
+    pub version: Option<String>,
+    pub channel: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublicConfigCandidate {
+    pub id: String,
+    pub label: String,
+    pub source: String,
+    pub format: String,
+    pub priority: u8,
+    pub exists: bool,
+    pub writable: bool,
+    pub symlink: bool,
+    pub size_bytes: Option<u64>,
+    pub creation_eligible: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SettingEffect {
     pub status: String,
     pub source_candidate_id: Option<String>,
@@ -38,8 +50,8 @@ pub struct SettingEffect {
 pub struct EnvironmentReport {
     pub platform: String,
     pub architecture: String,
-    pub ghostty: GhosttyProbe,
-    pub candidates: Vec<ConfigCandidate>,
+    pub ghostty: PublicGhosttyInfo,
+    pub candidates: Vec<PublicConfigCandidate>,
     pub warnings: Vec<String>,
 }
 
@@ -97,7 +109,6 @@ pub struct ConfiguredSetting {
 pub struct ConfigSession {
     pub id: String,
     pub candidate_id: String,
-    pub path: String,
     pub revision: String,
     pub read_only: bool,
     pub values: std::collections::BTreeMap<String, Vec<String>>,

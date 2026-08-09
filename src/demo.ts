@@ -42,16 +42,13 @@ export const demoEnvironment: EnvironmentReport = {
   architecture: "arm64",
   ghostty: {
     available: true,
-    executablePath: "/Applications/Ghostty.app/Contents/MacOS/ghostty",
     version: "1.3.1",
     channel: "stable",
-    rawVersion: "Ghostty 1.3.1",
   },
   candidates: [
     {
       id: "demo-app-support",
       label: "macOS · config",
-      path: "~/Library/Application Support/com.mitchellh.ghostty/config",
       source: "macos",
       format: "legacy",
       priority: 3,
@@ -59,11 +56,11 @@ export const demoEnvironment: EnvironmentReport = {
       writable: true,
       symlink: false,
       sizeBytes: 1928,
+      creationEligible: false,
     },
     {
       id: "demo-xdg",
       label: "XDG · config",
-      path: "~/.config/ghostty/config",
       source: "xdg",
       format: "legacy",
       priority: 1,
@@ -71,6 +68,7 @@ export const demoEnvironment: EnvironmentReport = {
       writable: true,
       symlink: false,
       sizeBytes: 5145,
+      creationEligible: false,
     },
   ],
   warnings: [],

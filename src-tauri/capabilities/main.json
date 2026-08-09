@@ -7,7 +7,6 @@
   "permissions": [
     "allow-probe-environment",
     "allow-load-runtime-schema",
-    "allow-inspect-extension-manifest",
     "allow-load-config-graph",
     "allow-list-background-assets",
     "allow-choose-background-images",

@@ -24,7 +24,6 @@ function sessionFor(candidate: ConfigCandidate): ConfigSession {
   return {
     id: `session-${candidate.id}`,
     candidateId: candidate.id,
-    path: candidate.path,
     revision: `revision-${candidate.id}`,
     readOnly: false,
     values: Object.fromEntries(
@@ -104,6 +103,15 @@ describe("primary application journey", () => {
 
     expect(container.querySelector(".setup-page")).not.toBeNull();
     expect(backend.openConfig).not.toHaveBeenCalled();
+    const search = container.querySelector<HTMLInputElement>(
+      'input[aria-label="搜索名称或 Ghostty 配置项"]',
+    )!;
+    expect(search.disabled).toBe(true);
+    expect(search.placeholder).toBe("打开配置后即可搜索");
+    expect(search.hasAttribute("aria-describedby")).toBe(false);
+    expect(search.hasAttribute("aria-keyshortcuts")).toBe(false);
+    expect([...container.querySelectorAll<HTMLButtonElement>(".main-nav button, .category-nav button")]
+      .every((button) => button.disabled)).toBe(true);
 
     await act(async () => {
       container.querySelector<HTMLButtonElement>(".setup-page .button--secondary")!.click();
@@ -178,6 +186,39 @@ describe("primary application journey", () => {
 
     expect(container.querySelectorAll('[role="dialog"]')).toHaveLength(1);
     expect(container.querySelector('[role="dialog"] h2')?.textContent).toBe("配置来源");
+  });
+
+  it("shows a configuration-source failure and retries it in place", async () => {
+    const preferred = environment.candidates[0];
+    window.localStorage.setItem("ghostty-studio:preferred-candidate", preferred.id);
+    let resolveGraph!: (graph: ConfigGraph) => void;
+    vi.mocked(backend.loadConfigGraph)
+      .mockRejectedValueOnce({ code: "io_error" })
+      .mockImplementationOnce(() => new Promise<ConfigGraph>((resolve) => {
+        resolveGraph = resolve;
+      }));
+
+    act(() => root.render(<App />));
+    await settle();
+    const loadOrder = [...container.querySelectorAll<HTMLButtonElement>(".utility-menu__popover button")]
+      .find((button) => button.textContent?.includes("加载顺序"))!;
+    act(() => loadOrder.click());
+
+    expect(container.querySelector(".graph-error")?.textContent).toContain("配置来源读取失败");
+    const retry = container.querySelector<HTMLButtonElement>(".graph-error button")!;
+    act(() => retry.click());
+    expect(container.querySelector("[role='dialog']")?.getAttribute("aria-busy")).toBe("true");
+    expect(container.querySelector(".loading-card[role='status']")?.textContent)
+      .toContain("正在重新读取配置来源");
+
+    await act(async () => {
+      resolveGraph(emptyGraph);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(container.querySelector("[role='dialog']")?.getAttribute("aria-busy")).toBe("false");
+    expect(container.querySelector(".graph-error")).toBeNull();
+    expect(container.querySelector(".graph-metrics")).not.toBeNull();
   });
 
   it("keeps the editing journey free of disabled reference controls", async () => {
@@ -306,6 +347,14 @@ describe("primary application journey", () => {
     expect(search.selectionEnd).toBe("opacity".length);
 
     act(() => search.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "Enter",
+      bubbles: true,
+    })));
+    expect(document.activeElement).not.toBe(search);
+    expect(document.activeElement?.closest('[id^="setting-"]')?.id).toMatch(/^setting-/);
+
+    act(() => search.focus());
+    act(() => search.dispatchEvent(new KeyboardEvent("keydown", {
       key: "Escape",
       bubbles: true,
     })));
@@ -314,6 +363,42 @@ describe("primary application journey", () => {
     expect(document.activeElement).toBe(search);
     expect(search.hasAttribute("aria-describedby")).toBe(false);
     expect(container.querySelector("#search-result-count")).toBeNull();
+  });
+
+  it("moves Enter to reference and specialized-editor search results", async () => {
+    const preferred = environment.candidates[0];
+    window.localStorage.setItem("ghostty-studio:preferred-candidate", preferred.id);
+    act(() => root.render(<App />));
+    await settle();
+
+    const search = container.querySelector<HTMLInputElement>(
+      'input[aria-label="搜索名称或 Ghostty 配置项"]',
+    )!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    act(() => {
+      setter.call(search, "theme");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    act(() => search.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "Enter",
+      bubbles: true,
+    })));
+
+    expect(document.activeElement?.closest("article")?.id).toBe("setting-theme");
+    expect(document.activeElement?.classList.contains("disclosure-summary")).toBe(true);
+
+    act(() => {
+      search.focus();
+      setter.call(search, "background-image-repeat");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    act(() => search.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "Enter",
+      bubbles: true,
+    })));
+
+    expect(document.activeElement?.classList.contains("background-editor")).toBe(true);
+    expect(document.activeElement?.id).toBe("setting-background-image");
   });
 
   it("moves from the complete catalog to the real editor", async () => {
@@ -360,6 +445,31 @@ describe("primary application journey", () => {
     expect(background.textContent).toContain("请在配置文件中合并或编辑这些值");
   });
 
+  it("does not present a hidden invalid value as an editable default", async () => {
+    const preferred = environment.candidates[0];
+    window.localStorage.setItem("ghostty-studio:preferred-candidate", preferred.id);
+    vi.mocked(backend.openConfig).mockImplementation(async () => {
+      const opened = sessionFor(preferred);
+      return {
+        ...opened,
+        configuredSettings: opened.configuredSettings.map((item) => (
+          item.key === "background" ? { ...item, valueExposure: "protected" as const } : item
+        )),
+        values: Object.fromEntries(
+          Object.entries(opened.values).filter(([key]) => key !== "background"),
+        ),
+      };
+    });
+    act(() => root.render(<App />));
+    await settle();
+
+    const background = [...container.querySelectorAll<HTMLElement>(".reference-setting-row")]
+      .find((row) => row.querySelector("code")?.textContent === "background")!;
+    expect(background).toBeTruthy();
+    expect(background.textContent).toContain("原值已保留");
+    expect(background.querySelector("input, select, .reference-setting-row__state button")).toBeNull();
+  });
+
   it("keeps transient feedback in the selected interface language", async () => {
     const preferred = environment.candidates[0];
     window.localStorage.setItem("ghostty-studio:preferred-candidate", preferred.id);
@@ -379,6 +489,13 @@ describe("primary application journey", () => {
 
     expect(container.querySelector(".save-toast")?.textContent).toContain("已放弃 1 项修改");
 
+    const readsBeforeLanguageChange = {
+      environment: vi.mocked(backend.probeEnvironment).mock.calls.length,
+      schema: vi.mocked(backend.loadRuntimeSchema).mock.calls.length,
+      graph: vi.mocked(backend.loadConfigGraph).mock.calls.length,
+      config: vi.mocked(backend.openConfig).mock.calls.length,
+    };
+
     const language = container.querySelector<HTMLSelectElement>('select[aria-label="界面语言"]')!;
     const selectSetter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
     act(() => {
@@ -388,6 +505,45 @@ describe("primary application journey", () => {
 
     expect(container.querySelector(".save-toast")?.textContent).toContain("Discarded 1 change");
     expect(container.querySelector(".save-toast__action")?.textContent).toBe("Undo");
+    expect(vi.mocked(backend.probeEnvironment)).toHaveBeenCalledTimes(readsBeforeLanguageChange.environment);
+    expect(vi.mocked(backend.loadRuntimeSchema)).toHaveBeenCalledTimes(readsBeforeLanguageChange.schema);
+    expect(vi.mocked(backend.loadConfigGraph)).toHaveBeenCalledTimes(readsBeforeLanguageChange.graph);
+    expect(vi.mocked(backend.openConfig)).toHaveBeenCalledTimes(readsBeforeLanguageChange.config);
+  });
+
+  it("uses the newly selected language when a pending reload finishes", async () => {
+    const preferred = environment.candidates[0];
+    window.localStorage.setItem("ghostty-studio:preferred-candidate", preferred.id);
+    window.localStorage.setItem("ghostty-studio.language.v1", "zh-CN");
+    act(() => root.render(<I18nProvider><App /></I18nProvider>));
+    await settle();
+
+    let resolveProbe!: (report: EnvironmentReport) => void;
+    vi.mocked(backend.probeEnvironment).mockImplementationOnce(() => new Promise((resolve) => {
+      resolveProbe = resolve;
+    }));
+    act(() => container.querySelector<HTMLButtonElement>(
+      'button[aria-label="重新读取 Ghostty 配置"]',
+    )!.click());
+
+    const language = container.querySelector<HTMLSelectElement>('select[aria-label="界面语言"]')!;
+    const selectSetter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+    act(() => {
+      selectSetter.call(language, "en");
+      language.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    await act(async () => {
+      resolveProbe(structuredClone(environment));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(container.querySelector(".save-toast")?.textContent).toContain("Configuration reloaded.");
+    expect(container.querySelector(".save-toast")?.textContent).not.toContain("已重新读取配置");
+    expect(backend.probeEnvironment).toHaveBeenCalledTimes(2);
+    expect(backend.loadRuntimeSchema).toHaveBeenCalledTimes(2);
+    expect(backend.loadConfigGraph).toHaveBeenCalledTimes(2);
+    expect(backend.openConfig).toHaveBeenCalledTimes(2);
   });
 
   it("builds the draft preview from effective values and ignores an overridden edit", async () => {
@@ -421,7 +577,14 @@ describe("primary application journey", () => {
     });
 
     expect(screen.style.fontSize).toBe("20px");
-    expect(container.querySelector(".preview-note")?.textContent).toContain("会被其他配置覆盖");
+    const paneMode = container.querySelector(".preview-pane [role='radiogroup']");
+    const inlineMode = container.querySelector(".inline-preview [role='radiogroup']");
+    expect(paneMode).not.toBeNull();
+    expect(inlineMode).not.toBeNull();
+    expect(container.querySelector(".preview-pane .preview-note")?.textContent)
+      .toContain("会被其他配置覆盖");
+    expect(container.querySelector(".inline-preview .preview-note")?.textContent)
+      .toContain("会被其他配置覆盖");
   });
 
 });

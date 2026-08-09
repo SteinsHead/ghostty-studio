@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConfigSourcePanel } from "./components/ConfigSourcePanel";
+import { SetupPage } from "./components/SetupPage";
 import { demoEnvironment } from "./demo";
 import type { ConfigCandidate, EnvironmentReport } from "./types";
 
@@ -10,11 +11,11 @@ function missingCandidate(): ConfigCandidate {
   return {
     ...demoEnvironment.candidates[0],
     id: "missing-config",
-    path: "~/.config/ghostty/config",
     exists: false,
     writable: true,
     symlink: false,
     sizeBytes: null,
+    creationEligible: true,
   };
 }
 
@@ -29,9 +30,11 @@ function environmentWith(candidate: ConfigCandidate): EnvironmentReport {
 function Panel({
   environment,
   activeCandidate = null,
+  switchingCandidateId = null,
 }: {
   environment: EnvironmentReport;
   activeCandidate?: ConfigCandidate | null;
+  switchingCandidateId?: string | null;
 }) {
   return (
     <div className="app-shell">
@@ -41,7 +44,7 @@ function Panel({
         environment={environment}
         activeCandidate={activeCandidate}
         pendingChanges={0}
-        switchingCandidateId={null}
+        switchingCandidateId={switchingCandidateId}
         error={null}
         onClose={() => undefined}
         onOpenGraph={() => undefined}
@@ -92,5 +95,78 @@ describe("configuration source state reconciliation", () => {
     const select = container.querySelector<HTMLButtonElement>(".candidate-card__select")!;
     expect(select.disabled).toBe(true);
     expect(container.querySelector(".candidate-state")?.textContent).toContain("已打开 · 待刷新");
+  });
+
+  it("explains why a second configuration cannot be created", () => {
+    const existing = { ...demoEnvironment.candidates[0], exists: true };
+    const missing = { ...missingCandidate(), label: "Missing configuration" };
+    const environment = {
+      ...environmentWith(existing),
+      candidates: [existing, missing],
+    };
+    act(() => root.render(<Panel environment={environment} />));
+
+    const missingCard = Array.from(container.querySelectorAll<HTMLElement>(".candidate-card"))
+      .find((card) => card.textContent?.includes(missing.label));
+    expect(missingCard).toBeDefined();
+    expect(missingCard!.querySelector<HTMLButtonElement>(".candidate-card__select")!.disabled).toBe(true);
+    expect(missingCard!.querySelector(".candidate-state")?.textContent).toBe("已有其他配置");
+    expect(missingCard!.querySelector(".candidate-state--ready")).toBeNull();
+    expect(missingCard!.textContent).not.toContain("需手动创建");
+  });
+
+  it("distinguishes a disconnected Ghostty from an ineligible location", () => {
+    const missing = missingCandidate();
+    act(() => root.render(
+      <Panel
+        environment={{
+          ...environmentWith(missing),
+          ghostty: { ...demoEnvironment.ghostty, available: false },
+        }}
+      />,
+    ));
+    expect(container.querySelector(".candidate-state")?.textContent).toBe("连接 Ghostty 后可创建");
+
+    act(() => root.render(
+      <Panel environment={environmentWith({ ...missing, creationEligible: false })} />,
+    ));
+    expect(container.querySelector(".candidate-state")?.textContent).toBe("无法安全创建");
+    expect(container.querySelector(".candidate-state--ready")).toBeNull();
+  });
+
+  it("announces an in-progress source operation without exposing the path", () => {
+    const candidate = { ...demoEnvironment.candidates[0], exists: true };
+    act(() => root.render(
+      <Panel
+        environment={environmentWith(candidate)}
+        switchingCandidateId={candidate.id}
+      />,
+    ));
+
+    const dialog = container.querySelector<HTMLElement>('[role="dialog"]')!;
+    const status = container.querySelector<HTMLElement>('.candidate-state[role="status"]')!;
+    expect(dialog.getAttribute("aria-busy")).toBe("true");
+    expect(status.getAttribute("aria-live")).toBe("polite");
+    expect(status.getAttribute("aria-atomic")).toBe("true");
+    expect(status.textContent).toBe("正在打开…");
+  });
+
+  it("does not promise creation when setup has no eligible location", () => {
+    const missing = { ...missingCandidate(), writable: false };
+    act(() => root.render(
+      <SetupPage
+        environment={environmentWith(missing)}
+        refreshing={false}
+        pendingChanges={0}
+        onChooseSource={() => undefined}
+        onRefresh={() => undefined}
+      />,
+    ));
+
+    expect(container.querySelector("#setup-title")?.textContent).toBe("检查 Ghostty 配置位置");
+    expect(container.textContent).toContain("当前没有可安全创建的配置位置");
+    expect(Array.from(container.querySelectorAll("button")).map((button) => button.textContent))
+      .toContain("查看配置位置");
+    expect(container.textContent).not.toContain("创建你的 Ghostty 配置");
   });
 });

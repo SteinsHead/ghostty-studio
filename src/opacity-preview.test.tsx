@@ -149,6 +149,8 @@ describe("opacity preview stability", () => {
       });
 
       expect(rangeNode.value).toBe(value);
+      expect(rangeNode.getAttribute("aria-valuetext"))
+        .toBe(`${Math.round(Number(value) * 100)}%`);
       expect(Number.parseFloat(rangeNode.style.getPropertyValue("--range-progress")))
         .toBeCloseTo(Number(value) * 100);
       expect(number!.value).toBe(String(Math.round(Number(value) * 100)));

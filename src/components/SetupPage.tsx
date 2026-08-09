@@ -21,6 +21,13 @@ export function SetupPage({
   const { text } = useI18n();
   const ghosttyReady = Boolean(environment?.ghostty.available);
   const existingSources = environment?.candidates.filter((candidate) => candidate.exists) ?? [];
+  const canCreateSource = environment?.candidates.some((candidate) => (
+    !candidate.exists
+    && candidate.writable
+    && !candidate.symlink
+    && candidate.creationEligible
+  )) ?? false;
+  const hasExistingSource = existingSources.length > 0;
   const hasMultipleSources = existingSources.length > 1;
   const recoveringDraft = pendingChanges > 0;
 
@@ -30,7 +37,11 @@ export function SetupPage({
     ? text("连接 Ghostty 后开始", "Connect Ghostty to get started")
     : hasMultipleSources
       ? text("选择你常用的配置", "Choose the configuration you use")
-      : text("打开你的 Ghostty 配置", "Open your Ghostty configuration");
+      : hasExistingSource
+        ? text("打开你的 Ghostty 配置", "Open your Ghostty configuration")
+        : canCreateSource
+          ? text("创建你的 Ghostty 配置", "Create your Ghostty configuration")
+          : text("检查 Ghostty 配置位置", "Check Ghostty configuration locations");
   const description = recoveringDraft
     ? text(
         `本次会话保留 ${pendingChanges} 项修改。`,
@@ -46,10 +57,20 @@ export function SetupPage({
           "发现多份配置，请选择要编辑的一份。",
           "Multiple configurations found. Choose one to edit.",
         )
-      : text(
-          "选择现有配置，或在默认位置新建配置。",
-          "Choose an existing configuration or create one in the default location.",
-        );
+      : hasExistingSource
+        ? text(
+            "已找到一份配置，打开后即可开始。",
+            "One configuration was found. Open it to continue.",
+          )
+        : canCreateSource
+          ? text(
+              "尚未找到配置，可以在安全的默认位置创建一份。",
+              "No configuration was found. Create one in a safe default location.",
+            )
+          : text(
+              "当前没有可安全创建的配置位置，请查看检测结果。",
+              "No safe configuration location is currently available. Review the detected locations.",
+            );
 
   return (
     <section className="setup-page" aria-labelledby="setup-title">
@@ -81,9 +102,13 @@ export function SetupPage({
           </button>
         ) : ghosttyReady && (
           <button type="button" className="button button--primary" onClick={onChooseSource}>
-            {hasMultipleSources
-              ? text("选择配置", "Choose configuration")
-              : text("打开或创建配置", "Open or create configuration")}
+            {hasExistingSource
+              ? hasMultipleSources
+                ? text("选择配置", "Choose configuration")
+                : text("打开配置", "Open configuration")
+              : canCreateSource
+                ? text("创建配置", "Create configuration")
+                : text("查看配置位置", "Review locations")}
             <ArrowRight size={15} />
           </button>
         )}

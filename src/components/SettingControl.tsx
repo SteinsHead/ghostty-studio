@@ -138,6 +138,7 @@ export function SettingControl({
             style={{ "--range-progress": `${rangeProgress}%` } as CSSProperties}
             onChange={(event) => onChange(event.target.value)}
             aria-label={text(`${label} 滑块`, `${label} slider`)}
+            aria-valuetext={`${Math.round(rangeValue! * 100)}%`}
             aria-describedby={describedBy}
           />
         )}

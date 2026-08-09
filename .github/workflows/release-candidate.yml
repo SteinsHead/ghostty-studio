@@ -1,0 +1,192 @@
+name: Release candidate
+
+run-name: Release candidate v${{ inputs.version }} from ${{ inputs.ref }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, commit, or tag to build
+        required: true
+        type: string
+      version:
+        description: Version expected in package.json, Cargo.toml, and tauri.conf.json
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-candidate-${{ inputs.ref }}
+  cancel-in-progress: false
+
+jobs:
+  macos-arm64:
+    name: macOS ARM64 candidate
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      EXPECTED_VERSION: ${{ inputs.version }}
+      SOURCE_REF: ${{ inputs.ref }}
+      RUSTFLAGS: ""
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Verify source and ARM64 runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
+            echo "release candidates require a GitHub-hosted macOS ARM64 runner" >&2
+            exit 1
+          fi
+          if [[ -n "$(git status --porcelain)" ]]; then
+            echo "the checked-out source is not clean" >&2
+            exit 1
+          fi
+          git rev-parse --verify HEAD
+
+      - uses: pnpm/action-setup@f520eceda224fe1a4aed5a2a27a194379a409996 # v6
+        with:
+          version: 10.8.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify requested version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$EXPECTED_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "version must be a path-safe semantic version" >&2
+            exit 1
+          fi
+          package_version="$(node --input-type=commonjs -p "JSON.parse(require('node:fs').readFileSync('package.json', 'utf8')).version")"
+          tauri_version="$(node --input-type=commonjs -p "JSON.parse(require('node:fs').readFileSync('src-tauri/tauri.conf.json', 'utf8')).version")"
+          cargo_version="$(awk -F '"' '/^version = "/ { print $2; exit }' src-tauri/Cargo.toml)"
+          if [[ "$package_version" != "$EXPECTED_VERSION" ||
+                "$tauri_version" != "$EXPECTED_VERSION" ||
+                "$cargo_version" != "$EXPECTED_VERSION" ]]; then
+            echo "version mismatch: requested=$EXPECTED_VERSION package=$package_version tauri=$tauri_version cargo=$cargo_version" >&2
+            exit 1
+          fi
+
+      - name: Run release checks
+        run: pnpm check
+
+      - name: Build ad-hoc macOS package
+        run: pnpm package:macos-local
+
+      - name: Assemble candidate evidence
+        id: candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_dmg="src-tauri/target/release/bundle/dmg/Ghostty Studio_${EXPECTED_VERSION}_aarch64.dmg"
+          app_path="src-tauri/target/release/bundle/macos/Ghostty Studio.app"
+          app_binary="src-tauri/target/release/bundle/macos/Ghostty Studio.app/Contents/MacOS/ghostty-studio"
+          info_plist="$app_path/Contents/Info.plist"
+          if [[ ! -f "$source_dmg" || ! -f "$app_binary" ]]; then
+            echo "the expected ARM64 package was not produced" >&2
+            exit 1
+          fi
+          if [[ "$(lipo -archs "$app_binary")" != "arm64" ]]; then
+            echo "the application binary is not ARM64-only" >&2
+            exit 1
+          fi
+          codesign --verify --deep --strict --verbose=2 "$app_path"
+          signature_details="$(codesign -dv --verbose=4 "$app_path" 2>&1)"
+          if ! grep -q '^Signature=adhoc$' <<< "$signature_details"; then
+            echo "the candidate must use the documented ad-hoc signature" >&2
+            exit 1
+          fi
+          configured_identifier="$(node --input-type=commonjs -p "JSON.parse(require('node:fs').readFileSync('src-tauri/tauri.conf.json', 'utf8')).identifier")"
+          configured_minimum="$(node --input-type=commonjs -p "JSON.parse(require('node:fs').readFileSync('src-tauri/tauri.conf.json', 'utf8')).bundle.macOS.minimumSystemVersion")"
+          bundle_identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$info_plist")"
+          bundle_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$info_plist")"
+          bundle_minimum="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$info_plist")"
+          if [[ "$bundle_identifier" != "$configured_identifier" ||
+                "$bundle_version" != "$EXPECTED_VERSION" ||
+                "$bundle_minimum" != "$configured_minimum" ]]; then
+            echo "the packaged Info.plist does not match the reviewed bundle contract" >&2
+            exit 1
+          fi
+          hdiutil verify "$source_dmg"
+
+          mount_dir="$RUNNER_TEMP/ghostty-studio-dmg-mount"
+          mkdir -p "$mount_dir"
+          cleanup_mount() {
+            hdiutil detach "$mount_dir" >/dev/null 2>&1 || true
+          }
+          trap cleanup_mount EXIT
+          hdiutil attach "$source_dmg" -nobrowse -readonly -mountpoint "$mount_dir" >/dev/null
+          test -d "$mount_dir/Ghostty Studio.app"
+          test -f "$mount_dir/LICENSE.txt"
+          test -f "$mount_dir/THIRD_PARTY_NOTICES.txt"
+          test "$(readlink "$mount_dir/Applications")" = "/Applications"
+          test "$(lipo -archs "$mount_dir/Ghostty Studio.app/Contents/MacOS/ghostty-studio")" = "arm64"
+          codesign --verify --deep --strict --verbose=2 "$mount_dir/Ghostty Studio.app"
+          cleanup_mount
+          trap - EXIT
+
+          candidate_dir="$RUNNER_TEMP/ghostty-studio-release-candidate"
+          asset_name="Ghostty-Studio-v${EXPECTED_VERSION}-macos-arm64.dmg"
+          mkdir -p "$candidate_dir"
+          cp "$source_dmg" "$candidate_dir/$asset_name"
+          checksum="$(shasum -a 256 "$candidate_dir/$asset_name" | awk '{print $1}')"
+          printf '%s  %s\n' "$checksum" "$asset_name" > "$candidate_dir/SHA256SUMS.txt"
+          {
+            printf 'status=release-candidate-only\n'
+            printf 'distribution=GitHub Actions artifact; not a GitHub Release\n'
+            printf 'signature=ad-hoc; not Developer ID signed or notarized\n'
+            printf 'source-ref=%s\n' "$SOURCE_REF"
+            printf 'source-sha=%s\n' "$(git rev-parse HEAD)"
+            printf 'version=%s\n' "$EXPECTED_VERSION"
+            printf 'bundle-identifier=%s\n' "$bundle_identifier"
+            printf 'minimum-macos=%s\n' "$bundle_minimum"
+            printf 'runner-os=%s\n' "$(sw_vers -productVersion)"
+            printf 'runner-arch=%s\n' "$(uname -m)"
+            printf 'node=%s\n' "$(node --version)"
+            printf 'pnpm=%s\n' "$(pnpm --version)"
+            printf 'rustc=%s\n' "$(rustc --version)"
+            printf 'cargo=%s\n' "$(cargo --version)"
+            printf 'sha256=%s\n' "$checksum"
+          } > "$candidate_dir/BUILD-MANIFEST.txt"
+          if grep -R -a -l -F -- "$HOME/" "$candidate_dir" >/dev/null 2>&1; then
+            echo "candidate evidence contains the runner home path" >&2
+            exit 1
+          fi
+          echo "candidate_dir=$candidate_dir" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=ghostty-studio-v${EXPECTED_VERSION}-macos-arm64-candidate" >> "$GITHUB_OUTPUT"
+
+      - name: Upload candidate artifact
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ${{ steps.candidate.outputs.artifact_name }}
+          path: ${{ steps.candidate.outputs.candidate_dir }}
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - name: Summarize candidate boundary
+        shell: bash
+        run: |
+          {
+            echo "## Release candidate"
+            echo
+            echo "Built from \`$(git rev-parse HEAD)\` on a verified ARM64 macOS runner."
+            echo
+            echo "Actions artifact digest: \`${{ steps.upload.outputs.artifact-digest }}\`"
+            echo
+            echo "This workflow uploaded an Actions artifact only. The app is ad-hoc signed, not Developer ID signed or notarized, and was not published to GitHub Releases."
+          } >> "$GITHUB_STEP_SUMMARY"

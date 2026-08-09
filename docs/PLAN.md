@@ -59,8 +59,14 @@ Ghostty Studio 不是“把配置项塞进表单”的生成器，而是本地�
    `+list-keybinds` 填充动态选择器。
 5. 对无法识别的字段完整保留并默认只读；后续由隔离的 raw fallback 承接。
 
-schema 以 Ghostty 版本和输出 hash 为缓存键。stderr 与 exit code 分开处理；已知的
-非致命诊断不会误判为命令失败。
+当前唯一可写契约是 `ghostty-1.3.1-stable-macos-v1`：Ghostty `1.3.1`、`stable` 渠道、
+macOS，以及完整 `+show-config --default --docs` 输出的精确 SHA-256 必须同时匹配。精确匹配
+时开放 30 个普通标量和背景图片专用编辑器；任一条件不符，目录从加载起全部只读，不使用
+逐设置指纹兜底。
+
+所有 runtime schema 都经同一安装路径进入状态。schema 刷新、Stage、Apply 和 Restore
+共用串行 mutation gate；Stage 冻结本次受审设置契约，Apply 在系统确认前后重新加载并比对。
+stderr 与 exit code 分开处理，已知的非致命诊断不会误判为命令失败。
 
 ## 五、配置图与来源
 
@@ -69,7 +75,7 @@ schema 以 Ghostty 版本和输出 hash 为缓存键。stderr 与 exit code 分�
 
 - 相对路径相对于声明文件解析。
 - `?` 表示可选文件。
-- include 在声明文件全部读取后按 Ghostty 当前版本的队列顺序生效；1.3.x 的嵌套
+- include 在声明文件全部读取后按受审计 Ghostty 1.3.1 的队列顺序生效；该版本的嵌套
   include 呈广度优先效果，因此应用必须模拟完整加载图。
 - 循环、缺失、重复覆盖和符号链接都形成显式诊断。
 - macOS 下 XDG 层先加载，Application Support 层后加载。
@@ -85,8 +91,9 @@ schema 以 Ghostty 版本和输出 hash 为缓存键。stderr 与 exit code 分�
 - 预设与迁移映射；
 - 无脚本的预览描述。
 
-扩展包不能读取文件、联网或执行命令。当前只保留后端校验契约；未来开放安装前，必须
-展示来源、SHA-256、请求能力和覆盖范围，核心键覆盖也只能交给受信任且完整性固定的包。
+扩展包不能读取文件、联网或执行命令。当前只保留 Rust 内部校验与测试，没有 renderer
+IPC，也没有安装入口。未来开放安装前，必须展示来源、SHA-256、请求能力和覆盖范围，
+核心键覆盖也只能交给受信任且完整性固定的包。
 如果确有可执行扩展需求，再单独评估独立进程或 WASI 沙箱：默认无网络、无文件访问、
 有限 CPU/内存，并通过版本化 JSON-RPC 通信。
 
@@ -101,7 +108,7 @@ schema 以 Ghostty 版本和输出 hash 为缓存键。stderr 与 exit code 分�
 
 - 路径发现与 Ghostty 能力探测。
 - 无损 AST、revision、diff、内部诊断。
-- fixture 上的验证、备份、原子写入与冲突检测。
+- fixture 上的验证、备份、原子写入与冲突检测；真实上游 fixture 必须按原始字节保存。
 - UI 能打开 fixture、编辑、预览 diff、Apply/Undo。
 
 ### Phase 2：完整可视化体验
@@ -123,13 +130,16 @@ schema 以 Ghostty 版本和输出 hash 为缓存键。stderr 与 exit code 分�
 - fuzz/property tests 覆盖 parser round-trip。
 - macOS 签名、公证和签名更新；Linux AppImage/deb/rpm。
 - SBOM、依赖审计、固定 lockfile、可复现 CI 构建。
+- 手动候选构建只产审查证据；正式发布保持独立、显式流程。
 
 ## 八、当前开发基线
 
-- Ghostty：1.3.1；macOS 标准应用安装布局。
+- Ghostty：1.3.1 stable、macOS、精确 schema hash
+  `5e36480fe2ec3d510ffc32de84c617fbaca10e1330c097185301b51ab9c10e6c`。
 - Node：22.11.0；使用兼容该版本的 Vite 6，后续建议升级 LTS。
 - Xcode/clang 已具备；已安装并固定 Rust 1.97.1、rustfmt 与 clippy。
-- 自动测试使用临时目录和内存样例，不读取或写入真实配置内容。
+- 自动测试使用临时目录和内存样例，不读取或写入真实用户配置。仓库另含真实离线 Ghostty
+  1.3.1 输出 fixture 与 expected contract；上游尾随空格属于 hash 输入，不能清理。
 
 ## 九、当前实现进度（验证于 2026-08-09）
 
@@ -137,14 +147,16 @@ schema 以 Ghostty 版本和输出 hash 为缓存键。stderr 与 exit code 分�
 - **Phase 1 已形成可运行纵向切片：** Ghostty 探测、无损文档、revision、官方校验、
   锁、快照、原子写入、普通保存的验证失败回滚、原生确认与 UI review 流程；新建配置在
   无法确认最终状态时保留实际文件并重新探测，避免有竞争窗口的自动删除。
-- **Phase 2 部分完成：** 动态目录、搜索/分类、1.3.1 + schema-hash 版本化视觉控件、
-  安全预览和脱敏 provenance 观察图已可用；完整 effective-value 引擎、快捷键、重复值、
-  raw 专家编辑器和托管 overlay 尚未实现。
+- **Phase 2 部分完成：** 动态目录、搜索/分类、精确 1.3.1 stable macOS 契约下的 30 个
+  标量控件与背景图片编辑器、安全预览和脱敏 provenance 观察图已可用；其他 runtime 从
+  schema 加载起只读。完整 effective-value 引擎、快捷键、重复值、raw 专家编辑器和托管
+  overlay 尚未实现。
 - **Phase 3 已完成基础契约：** extension manifest 有严格 schema、capability allowlist 和
-  核心键覆盖规则；它目前仅供后端与开发者使用，应用内没有扩展安装、管理或执行界面。
-- **Phase 4 尚未完成：** 当前有 94 个 Rust 测试、104 个前端测试、clippy、生产构建、
-  真实 Tauri 启动冒烟，以及通过严格完整性和 DMG 校验的 macOS ad-hoc 本地包；仍需
-  fuzz、跨版本 fixture、Linux CI、Developer ID 签名、公证、SBOM 和更新器。
+  核心键覆盖规则；当前只保留 Rust 内部校验与测试，无 renderer IPC、安装、管理或执行入口。
+- **Phase 4 部分完成：** Ubuntu CI 覆盖 frontend 与 Rust，PR 运行 dependency review，
+  `macos-15` 构建并检查 ARM64 app；手动 release-candidate 只上传 Actions 证据 artifact。
+  测试总数以 CI 为准。仍需 fuzz、更多 Ghostty 版本 fixture、Developer ID 签名、公证、
+  SBOM、正式 Linux 桌面包和更新器。
 
 当前 ad-hoc 包只适合明确标注的早期预览。进入正式签名发行前，还必须固定最终 bundle
 identifier，统一版本来源，完成 universal/架构支持矩阵、Developer ID、notarization、

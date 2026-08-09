@@ -29,13 +29,18 @@ function candidateState(
   candidate: ConfigCandidate,
   creationAllowed: boolean,
   active: boolean,
+  hasExistingConfig: boolean,
+  ghosttyAvailable: boolean,
 ): string {
   const chinese = locale === "zh-CN";
   if (active && !candidate.exists) return chinese ? "已打开 · 待刷新" : "Open · Refresh needed";
   if (!candidate.exists) {
-    return creationAllowed
-      ? (chinese ? "可安全创建" : "Ready to create")
-      : (chinese ? "需手动创建" : "Create manually");
+    if (creationAllowed) return chinese ? "可安全创建" : "Ready to create";
+    if (hasExistingConfig) return chinese ? "已有其他配置" : "Another configuration exists";
+    if (!ghosttyAvailable) return chinese ? "连接 Ghostty 后可创建" : "Connect Ghostty to create";
+    if (candidate.symlink) return chinese ? "符号链接 · 不可创建" : "Symlink · Cannot create";
+    if (!candidate.writable) return chinese ? "位置不可写" : "Location is not writable";
+    return chinese ? "无法安全创建" : "Safe creation unavailable";
   }
   if (candidate.symlink) return chinese ? "符号链接 · 只读" : "Symlink · Read only";
   if (!candidate.writable) return chinese ? "只读" : "Read only";
@@ -70,14 +75,15 @@ export function ConfigSourcePanel({
   const { locale, text } = useI18n();
   const [pendingCandidate, setPendingCandidate] = useState<ConfigCandidate | null>(null);
   const switching = switchingCandidateId !== null;
+  const ghosttyAvailable = Boolean(environment?.ghostty.available);
   const hasExistingConfig = (environment?.candidates ?? []).some((candidate) => candidate.exists);
   const canCreate = (candidate: ConfigCandidate) => (
     !candidate.exists
     && candidate.id !== activeCandidate?.id
     && candidate.writable
     && !hasExistingConfig
-    && Boolean(environment?.ghostty.available)
-    && candidate.path.startsWith("~/")
+    && ghosttyAvailable
+    && candidate.creationEligible
   );
   const dialogRef = useDialogFocus(onClose, switching);
 
@@ -122,6 +128,7 @@ export function ConfigSourcePanel({
         role="dialog"
         aria-modal="true"
         aria-labelledby="source-panel-title"
+        aria-busy={switching}
         tabIndex={-1}
         onMouseDown={(event) => event.stopPropagation()}
       >
@@ -155,6 +162,9 @@ export function ConfigSourcePanel({
               const creationAllowed = canCreate(candidate);
               const isPending = pendingCandidate?.id === candidate.id;
               const isSwitching = switchingCandidateId === candidate.id;
+              const ready = candidate.exists
+                ? candidate.writable && !candidate.symlink
+                : creationAllowed;
               return (
                 <article className={`candidate-card ${active ? "candidate-card--active" : ""} ${isPending ? "candidate-card--pending" : ""}`} key={candidate.id}>
                   <button
@@ -171,14 +181,25 @@ export function ConfigSourcePanel({
                         {active && <em><Check size={11} /> {text("保存到这里", "Save destination")}</em>}
                       </span>
                       <small>{sourceDescription(locale, candidate)}</small>
-                      <code title={candidate.path}>{candidate.path}</code>
                     </span>
-                    <span className={`candidate-state ${candidate.writable && !candidate.symlink ? "candidate-state--ready" : ""}`}>
+                    <span
+                      className={`candidate-state ${ready ? "candidate-state--ready" : ""}`}
+                      role={isSwitching ? "status" : undefined}
+                      aria-live={isSwitching ? "polite" : undefined}
+                      aria-atomic={isSwitching ? "true" : undefined}
+                    >
                       {isSwitching
                         ? (candidate.exists
                             ? text("正在打开…", "Opening…")
                             : text("正在创建…", "Creating…"))
-                        : candidateState(locale, candidate, creationAllowed, active)}
+                        : candidateState(
+                            locale,
+                            candidate,
+                            creationAllowed,
+                            active,
+                            hasExistingConfig,
+                            ghosttyAvailable,
+                          )}
                     </span>
                   </button>
 

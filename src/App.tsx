@@ -1,27 +1,16 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
-  BookOpen,
   CheckCircle2,
   ChevronRight,
-  FileCog,
   FileText,
-  Globe2,
-  History,
-  Layers3,
-  MoreHorizontal,
-  PanelLeft,
-  RefreshCw,
   RotateCcw,
   Search,
   Settings2,
-  ShieldCheck,
-  SlidersHorizontal,
-  Sparkles,
-  Star,
   X,
 } from "lucide-react";
 import { backend, isDesktop } from "./backend";
+import { AppearancePreview, type PreviewMode } from "./components/AppearancePreview";
 import { ConfigSourcePanel } from "./components/ConfigSourcePanel";
 import { BackgroundImageEditor } from "./components/BackgroundImageEditor";
 import { ConfigGraphPanel } from "./components/ConfigGraphPanel";
@@ -33,7 +22,8 @@ import { SetupPage } from "./components/SetupPage";
 import { SettingRow } from "./components/SettingRow";
 import { SnapshotHistoryPanel } from "./components/SnapshotHistoryPanel";
 import { StudioMark } from "./components/StudioMark";
-import { TerminalPreview } from "./components/TerminalPreview";
+import { StudioSidebar } from "./components/StudioSidebar";
+import { StudioToolbar } from "./components/StudioToolbar";
 import {
   compareCompatibility,
   createCompatibilitySnapshot,
@@ -46,11 +36,10 @@ import type { CompatibilityChange } from "./productModel";
 import { changeSetsEqual, ReviewGuard } from "./reviewGuard";
 import { DraftMutationGuard, hasSourceBoundRemoval } from "./draftMigration";
 import { effectiveDraftPreview, ignoredDraftPreviewKeys } from "./effectivePreview";
-import { textForLocale, useI18n, type AppLocale, type LanguagePreference } from "./i18n";
+import { textForLocale, useI18n, type LocalizedText } from "./i18n";
 import { copyForSetting } from "./settingCopy";
 import {
   assetIdFromBackgroundValue,
-  backgroundValueForState,
   BACKGROUND_IMAGE_SETTING_KEYS,
   isBackgroundSetting,
   MANAGED_BACKGROUND_PREFIX,
@@ -69,8 +58,33 @@ import {
   PREVIEW_SETTING_KEYS,
   withConfiguredReferences,
 } from "./workspaceModel";
+import {
+  backgroundImportFailure,
+  errorCode,
+  errorMessage,
+  matchesMutationUncertainty,
+  savedNotice,
+  unverifiedChangeEffect,
+} from "./studioMessages";
+import {
+  effectiveValuesForSession,
+  initialValues,
+  LAST_CATEGORY_KEY,
+  MutationCoordinator,
+  normalizeViewPreference,
+  PREFERRED_CANDIDATE_KEY,
+  readPreference,
+  valuesForSession,
+  writePreference,
+  type MutationKind,
+  type MutationOperation,
+} from "./studioState";
+import {
+  loadWorkspaceResources,
+  workspaceGraphError,
+  workspaceResourceMessages,
+} from "./workspaceResources";
 import type {
-  ApplyResult,
   BackgroundAssetSummary,
   BackgroundPreviewState,
   ChangePreview,
@@ -84,302 +98,6 @@ import type {
   SnapshotInfo,
 } from "./types";
 
-const LAST_CATEGORY_KEY = "ghostty-studio:last-category";
-const PREFERRED_CANDIDATE_KEY = "ghostty-studio:preferred-candidate";
-
-type MutationKind = "source" | "apply" | "restore" | "refresh";
-interface MutationOperation {
-  kind: MutationKind;
-  token: symbol;
-}
-
-const viewPreferenceIds: Record<string, string> = {
-  "常用": "common",
-  "我的配置": "configured",
-  "设置参考": "catalog",
-};
-
-function normalizeViewPreference(value: string | null): string {
-  if (!value) return "common";
-  return viewPreferenceIds[value] ?? categoryId(value);
-}
-
-function readPreference(key: string): string | null {
-  try {
-    return window.localStorage.getItem(key);
-  } catch {
-    return null;
-  }
-}
-
-function writePreference(key: string, value: string) {
-  try {
-    window.localStorage.setItem(key, value);
-  } catch {
-    // Preferences improve continuity but never block configuration work.
-  }
-}
-
-function initialValues(options: RuntimeOption[]): Record<string, string> {
-  return Object.fromEntries(
-    options.map((option) => [
-      option.key,
-      option.defaultValues[0] ?? "",
-    ]),
-  );
-}
-
-function valuesForSession(
-  options: RuntimeOption[],
-  session: ConfigSession,
-): Record<string, string> {
-  const values = initialValues(options);
-  for (const [key, configuredValues] of Object.entries(session.values)) {
-    if (configuredValues.length > 0 && key in values) {
-      values[key] = configuredValues[configuredValues.length - 1];
-    }
-  }
-  values["background-image"] = backgroundValueForState(session.backgroundImage);
-  return values;
-}
-
-function effectiveValuesForSession(
-  options: RuntimeOption[],
-  session: ConfigSession,
-): Record<string, string> {
-  if (!session.effectiveValuesKnown) return valuesForSession(options, session);
-  const values = initialValues(options);
-  for (const [key, configuredValues] of Object.entries(session.effectiveValues)) {
-    if (configuredValues.length > 0 && key in values) {
-      values[key] = configuredValues[configuredValues.length - 1];
-    }
-  }
-  values["background-image"] = backgroundValueForState(session.effectiveBackgroundImage);
-  return values;
-}
-
-function savedNotice(
-  locale: AppLocale,
-  activation: ApplyResult["activation"],
-  effectiveStatus: ApplyResult["effectiveStatus"],
-  target?: string,
-): string {
-  if (effectiveStatus === "unverified") {
-    return textForLocale(
-      locale,
-      "已保存，但生效状态未确认。请重新检查。",
-      "Saved, but the effective state could not be verified. Check again.",
-    );
-  }
-  const saved = effectiveStatus === "resolved"
-    ? textForLocale(
-        locale,
-        "已保存；移除的设置将继承其他配置或默认值。",
-        "Saved. Removed settings will inherit another source or the default. ",
-      )
-    : target
-      ? textForLocale(locale, `已保存到 ${target}。`, `Saved to ${target}. `)
-      : textForLocale(locale, "已保存。", "Saved. ");
-  if (activation === "restart") {
-    return `${saved}${textForLocale(locale, "重启 Ghostty 后生效。", "Restart Ghostty to apply.")}`;
-  }
-  if (activation === "reload-new-terminal") {
-    return `${saved}${textForLocale(locale, "重新载入后，新终端生效。", "Reload Ghostty; new terminals will use the changes.")}`;
-  }
-  if (activation === "reload") {
-    return `${saved}${textForLocale(locale, "重新载入 Ghostty 后生效。", "Reload Ghostty to apply.")}`;
-  }
-  return `${saved}${textForLocale(locale, "请在 Ghostty 中确认效果。", "Check the result in Ghostty.")}`;
-}
-
-function errorMessage(locale: AppLocale, error: unknown): string {
-  const friendlyMessages: Record<string, [string, string]> = {
-    unknown_session: ["配置会话已过期，请重新打开应用。", "This configuration session has expired. Reopen the app to continue."],
-    invalid_candidate: ["无法确认这个配置位置，请重新检查。", "This configuration location could not be verified. Check again."],
-    unknown_candidate: ["这个配置位置已发生变化，请重新检查。", "This configuration location has changed. Check again."],
-    state_poisoned: ["本地工作区暂时不可用，请重新启动应用。", "The local workspace is temporarily unavailable. Restart the app."],
-    schema_not_loaded: ["可用设置尚未准备好，请重新检查。", "The available settings are not ready yet. Check again."],
-    revision_conflict: ["配置已被其他应用修改。重新读取后再保存。", "Another app changed this configuration. Reload it before saving."],
-    read_only_session: ["这份配置只能查看。请选择可写的位置。", "This configuration is read-only. Choose a writable location."],
-    unknown_stage: ["检查结果已过期，请重新检查更改。", "This review has expired. Check the changes again."],
-    stage_mismatch: ["检查结果与当前草稿不一致，请重新检查。", "The review no longer matches the draft. Check the changes again."],
-    validation_failed: ["Ghostty 无法读取这份草稿，请按提示调整。", "Ghostty could not read this draft. Review the details and adjust it."],
-    validation_failed_after_confirmation: ["Ghostty 无法读取这份草稿，文件没有保存。", "Ghostty could not read this draft, so nothing was saved."],
-    setting_requires_specialized_editor: ["这项设置需要专用编辑方式，原配置没有改变。", "This setting needs a dedicated editor. The original configuration was preserved."],
-    complex_setting_requires_editor: ["这项设置包含多项内容，需要专用编辑方式。", "This setting contains multiple values and needs a dedicated editor."],
-    duplicate_setting_requires_editor: ["这项设置在文件中出现多次，请先在配置文件中整理。", "This setting appears more than once. Organize it in the configuration file first."],
-    ghostty_contract_changed: ["Ghostty 已更新。设置已重新读取，请再次检查草稿。", "Ghostty was updated. Settings were reloaded; review the draft again."],
-    ghostty_contract_read_only: ["当前 Ghostty 版本暂不支持编辑。", "Editing is unavailable for this Ghostty version."],
-    ghostty_unavailable: ["没有找到 Ghostty，暂时无法保存。", "Ghostty was not found, so changes cannot be saved yet."],
-    mutation_in_progress: ["另一项配置操作正在进行，请稍后再试。", "Another configuration task is in progress. Try again shortly."],
-    native_confirmation_failed: ["无法打开系统确认窗口。", "The system confirmation dialog could not be opened."],
-    native_confirmation_cancelled: ["操作已取消。", "The action was cancelled."],
-    snapshot_requires_specialized_restore: ["这个恢复点包含当前版本无法自动还原的设置。", "This restore point contains settings this version cannot restore safely."],
-    missing_config: ["配置文件不存在，请重新检查位置。", "The configuration file no longer exists. Check its location."],
-    config_already_exists: ["目标位置已经有配置文件。为避免覆盖，请重新检查。", "A configuration file now exists at that location. Check again to avoid overwriting it."],
-    existing_config_prevents_creation: ["已经存在默认配置，请选择它或手动管理其他位置。", "A default configuration already exists. Choose it or manage other locations manually."],
-    config_creation_not_allowed: ["这个位置不满足安全创建条件，请手动创建后再检查。", "This location is not eligible for safe creation. Create it manually, then check again."],
-    creation_outside_home: ["只能在用户目录内的 Ghostty 默认位置安全创建配置。", "Safe creation is limited to Ghostty's default locations in your home folder."],
-    creation_outside_approved_root: ["只能在用户目录内的 Ghostty 默认位置安全创建配置。", "Safe creation is limited to Ghostty's default locations in your home folder."],
-    relative_xdg_config_home: ["XDG_CONFIG_HOME 不是绝对路径，请修正或手动创建配置。", "XDG_CONFIG_HOME is not an absolute path. Fix it or create the configuration manually."],
-    non_utf8_config_root: ["无法安全识别配置目录，自动创建已停用。", "The configuration folder could not be identified safely, so automatic creation is unavailable."],
-    home_unavailable: ["无法确认用户目录，自动创建已停止。", "Your home folder could not be verified, so automatic creation was stopped."],
-    invalid_creation_root: ["配置目录不满足安全要求，请手动创建后再检查。", "The configuration folder does not meet the safety requirements. Create it manually, then check again."],
-    invalid_creation_parent: ["配置路径包含无法安全使用的目录，请选择其他位置。", "The configuration path contains a folder that cannot be used safely. Choose another location."],
-    invalid_target: ["这个配置位置不满足安全创建要求。", "This configuration location does not meet the safety requirements."],
-    candidate_changed: ["确认期间配置位置发生了变化。没有创建文件，请重新检查。", "The configuration location changed during confirmation. Nothing was created; check again."],
-    baseline_validation_failed: ["Ghostty 的默认配置未通过验证，因此没有创建文件。", "Ghostty's default configuration did not pass validation, so no file was created."],
-    config_creation_not_supported: ["当前平台不支持安全自动创建，请手动创建后再检查。", "Safe automatic creation is unavailable on this platform. Create the file manually, then check again."],
-    config_creation_failed: ["无法安全创建配置文件，已有内容没有改变。", "The configuration file could not be created safely. Existing content was not changed."],
-    post_creation_validation_failed: ["新配置未通过 Ghostty 验证。空文件已保留，请检查后手动处理。", "The new configuration did not pass Ghostty validation. The empty file was kept for manual review."],
-    post_creation_conflict: ["新配置随即被其他应用修改。较新的文件已保留，请重新检查。", "Another app changed the new configuration. The newer file was preserved; check again."],
-    post_creation_unverified: ["配置可能已经创建，但无法确认最终状态。请重新检查。", "The configuration may have been created, but its final state could not be verified. Check again."],
-    post_creation_rollback_failed: ["无法确认新配置是否已安全撤回。请先重新检查，不要重复创建。", "The new configuration could not be confirmed as reverted. Check again before retrying."],
-    creation_rollback_failed: ["无法确认空配置是否已撤回。请重新检查。", "The empty configuration could not be confirmed as reverted. Check again."],
-    config_too_large: ["配置文件超过安全读取上限，应用不会继续处理。", "The configuration exceeds the safe read limit and will not be processed."],
-    invalid_encoding: ["配置文件不是有效的 UTF-8，应用不会改写它。", "The configuration is not valid UTF-8 and will not be rewritten."],
-    io_error: ["本地文件操作没有完成。请重新检查实际状态。", "The local file operation did not complete. Check the current state."],
-    ghostty_schema_failed: ["无法读取 Ghostty 的可用设置，请检查安装。", "Ghostty's available settings could not be read. Check the installation."],
-    ghostty_spawn_failed: ["无法启动 Ghostty 验证，请检查安装。", "Ghostty validation could not start. Check the installation."],
-    ghostty_pipe_failed: ["无法安全读取 Ghostty 的验证结果。", "Ghostty's validation result could not be read safely."],
-    ghostty_pipe_timeout: ["读取 Ghostty 验证结果超时，操作已停止。", "Reading Ghostty's validation result timed out. The operation was stopped."],
-    ghostty_timeout: ["Ghostty 验证超时，操作已停止。", "Ghostty validation timed out. The operation was stopped."],
-    ghostty_output_too_large: ["Ghostty 返回的验证结果过大，操作已停止。", "Ghostty returned too much validation output. The operation was stopped."],
-    ghostty_effective_config_failed: ["无法读取 Ghostty 的最终配置，因此没有保存。", "Ghostty's final configuration could not be read, so nothing was saved."],
-    ghostty_helper_crashed: ["Ghostty 的配置检查进程连续异常退出，因此没有保存。", "Ghostty's configuration helper repeatedly exited unexpectedly, so nothing was saved."],
-    change_would_be_overridden: ["这些修改会被后续配置覆盖。请选择提示的生效来源。", "A later configuration source would override these changes. Choose the suggested effective source."],
-    effective_source_unverified: ["无法确认最终生效来源，因此没有保存。", "The effective source could not be verified, so nothing was saved."],
-    effective_sources_changed: ["检查期间配置来源发生了变化。草稿仍在，请重新检查。", "Configuration sources changed during review. Your draft remains; check again."],
-    effective_value_mismatch: ["写入内容没有进入 Ghostty 的最终配置，文件已恢复。请选择正确的生效来源。", "The written values did not reach Ghostty's final configuration. The file was restored; choose the correct effective source."],
-    post_write_effect_verification_failed: ["保存后无法确认最终生效值，文件已恢复。草稿仍在。", "The effective values could not be confirmed after saving. The file was restored and your draft remains."],
-    post_write_effect_rollback_failed: ["无法确认文件是否已安全恢复。编辑已暂停，请先重新读取配置。", "The file could not be confirmed as restored safely. Editing was paused; reload the configuration first."],
-    no_effective_changes: ["草稿没有改变这份配置。", "The draft does not change this configuration."],
-    post_validation_conflict: ["验证期间配置被其他应用修改。外部修改已保留，请重新检查。", "Another app changed the configuration during validation. Its changes were preserved; check again."],
-    post_validation_unverified: ["写入后的文件状态无法确认，编辑已暂停。请重新读取配置。", "The file could not be verified after writing, so editing was paused. Reload the configuration."],
-    invalid_setting_value: ["这个值不符合设置格式。", "This value does not match the setting's format."],
-    value_out_of_range: ["这个数值超出了可用范围。", "This value is outside the allowed range."],
-    invalid_locale: ["界面语言无效，请重新选择。", "The interface language is invalid. Choose it again."],
-    app_data_unavailable: ["无法打开本地资料目录。", "The local data folder is unavailable."],
-    background_library_unavailable: ["图片库暂时不可用。", "The image library is temporarily unavailable."],
-    background_library_too_large: ["图片库项目过多，请先整理。", "The image library contains too many items."],
-    background_library_full: ["图片库已达到容量上限。", "The image library has reached its capacity."],
-    background_picker_failed: ["无法打开系统图片选择器。", "The system image picker could not be opened."],
-    background_store_unavailable: ["图片库正在处理另一项操作，请稍后重试。", "The image library is finishing another operation. Try again shortly."],
-    background_import_batch_too_large: ["一次最多选择 20 张图片。", "Choose no more than 20 images at once."],
-    background_asset_changed: ["图库中的图片已发生变化，请重新导入。", "This library image changed. Import it again."],
-    background_asset_corrupt: ["图库中的图片无法读取，请重新导入。", "This library image could not be read. Import it again."],
-    background_asset_in_use: ["这张图片仍被 Ghostty 配置引用。请在“写入位置”查看来源，切换并保存后再删除。", "This image is still referenced. Check Write locations, switch it there, save, then delete it."],
-    background_asset_usage_unknown: ["配置来源尚未完整确认，因此没有删除。请重新读取后再试。", "Configuration sources are not fully verified, so the image was not deleted. Reload and try again."],
-    background_asset_remove_failed: ["没有完整删除这张图片，请重试。", "The image was not fully removed. Try again."],
-    invalid_background_selection: ["请选择图片库中的图片。", "Choose an image from the library."],
-    background_draft_changed: ["背景图片已在其他位置改变，请重新读取后再试。", "The background image changed elsewhere. Reload and try again."],
-  };
-  if (error && typeof error === "object" && "code" in error) {
-    const code = (error as { code?: unknown }).code;
-    if (typeof code === "string" && friendlyMessages[code]) {
-      const message = friendlyMessages[code];
-      return textForLocale(locale, message[0], message[1]);
-    }
-  }
-  const knownBrowserMessages: Record<string, [string, string]> = {
-    "浏览器演示模式不会创建本地配置文件": ["试用模式不会创建本地配置文件。", "Try mode does not create local configuration files."],
-    "浏览器演示模式禁止写入本地配置": ["试用模式不会写入本地配置。", "Try mode does not write local configuration files."],
-    "浏览器演示模式只展示示例快照，禁止恢复本地配置": ["试用模式只能查看示例恢复点。", "Try mode only shows sample restore points."],
-  };
-  const rawMessage = error instanceof Error
-    ? error.message
-    : typeof error === "string"
-      ? error
-      : null;
-  if (rawMessage && knownBrowserMessages[rawMessage]) {
-    const message = knownBrowserMessages[rawMessage];
-    return textForLocale(locale, message[0], message[1]);
-  }
-  return textForLocale(
-    locale,
-    "操作失败，草稿已保留。请重新检查。",
-    "Action failed. Your draft is preserved. Check again.",
-  );
-}
-
-function errorCode(error: unknown): string | null {
-  if (error && typeof error === "object" && "code" in error) {
-    const code = (error as { code?: unknown }).code;
-    return typeof code === "string" ? code : null;
-  }
-  return null;
-}
-
-function backgroundImportFailure(locale: AppLocale, code: string): string {
-  const messages: Record<string, [string, string]> = {
-    background_image_unsupported_format: ["Ghostty 目前只支持 PNG 和 JPEG。", "Ghostty currently supports PNG and JPEG images."],
-    background_image_corrupt: ["图片内容不完整或已经损坏。", "The image is incomplete or damaged."],
-    background_image_dimensions_too_large: ["图片超过 8192 像素边长或 3200 万像素限制。", "The image exceeds the 8192 px edge or 32 megapixel limit."],
-    background_image_too_large: ["图片文件超过 32 MB 限制。", "The image exceeds the 32 MB limit."],
-    background_image_unreadable: ["无法安全读取这张图片。", "This image could not be read safely."],
-    background_image_changed: ["读取期间图片发生了变化，请重试。", "The image changed while it was being read. Try again."],
-    background_library_full: ["图片库已达到容量上限。", "The image library has reached its capacity."],
-  };
-  const message = messages[code] ?? ["这张图片无法导入。", "This image could not be imported."];
-  return textForLocale(locale, message[0], message[1]);
-}
-
-function matchesMutationUncertainty(code: string | null): boolean {
-  return code === "post_commit_conflict"
-    || code === "post_commit_unverified"
-    || code === "post_validation_conflict"
-    || code === "post_validation_unverified"
-    || code === "post_write_validation_rollback_failed"
-    || code === "post_write_effect_rollback_failed"
-    || code === "post_restore_validation_rollback_failed";
-}
-
-function unverifiedChangeEffect(changes: DraftChange[]): ChangePreview["effect"] {
-  return {
-    status: "unverified",
-    affectedKeys: changes.map((change) => change.key),
-    suggestedCandidateId: null,
-    suggestedLabel: null,
-  };
-}
-
-async function loadWorkspaceResources(locale: AppLocale) {
-  const [environmentResult, schemaResult, graphResult] = await Promise.allSettled([
-    backend.probeEnvironment(),
-    backend.loadRuntimeSchema(),
-    backend.loadConfigGraph(),
-  ]);
-  const environmentError = environmentResult.status === "rejected"
-    ? `${textForLocale(locale, "环境检查失败：", "Environment check failed: ")}${errorMessage(locale, environmentResult.reason)}`
-    : null;
-  const schemaError = schemaResult.status === "rejected"
-    ? `${textForLocale(locale, "设置读取失败：", "Settings could not be loaded: ")}${errorMessage(locale, schemaResult.reason)}`
-    : null;
-  const graphError = graphResult.status === "rejected"
-    ? `${textForLocale(locale, "配置来源读取失败：", "Configuration sources could not be loaded: ")}${errorMessage(locale, graphResult.reason)}`
-    : null;
-  return {
-    environment: environmentResult.status === "fulfilled" ? environmentResult.value : null,
-    schema: schemaResult.status === "fulfilled" ? schemaResult.value : null,
-    graph: graphResult.status === "fulfilled" ? graphResult.value : null,
-    graphError,
-    errors: [environmentError, schemaError, graphError].filter(
-      (message): message is string => Boolean(message),
-    ),
-  };
-}
-
-function categoryIcon(category: string) {
-  if (category === "common") return Star;
-  if (category === "configured") return FileText;
-  if (category === "catalog") return BookOpen;
-  if (category === "appearance") return Sparkles;
-  if (category === "privacy-security") return ShieldCheck;
-  if (category === "window") return PanelLeft;
-  if (category === "advanced") return Settings2;
-  return SlidersHorizontal;
-}
-
 export default function App() {
   const { locale, preference, setPreference, text } = useI18n();
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -387,13 +105,14 @@ export default function App() {
   const settingsPaneRef = useRef<HTMLElement>(null);
   const utilityMenuRef = useRef<HTMLDetailsElement>(null);
   const previousLocaleRef = useRef(locale);
+  const localeRef = useRef(locale);
   const pendingFocusKeyRef = useRef<string | null>(null);
   const reviewGuardRef = useRef(new ReviewGuard());
   const openReviewRef = useRef<() => void>(() => undefined);
   const dialogOpenRef = useRef(false);
   const changesRef = useRef<DraftChange[]>([]);
   const draftMutationGuardRef = useRef(new DraftMutationGuard());
-  const mutationOperationRef = useRef<MutationOperation | null>(null);
+  const mutationCoordinatorRef = useRef(new MutationCoordinator());
   const sessionIdentityRef = useRef<{ id: string; revision: string } | null>(null);
   const [environment, setEnvironment] = useState<EnvironmentReport | null>(null);
   const [schema, setSchema] = useState<RuntimeSchema | null>(null);
@@ -403,7 +122,7 @@ export default function App() {
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState(() => normalizeViewPreference(readPreference(LAST_CATEGORY_KEY)));
-  const [previewMode, setPreviewMode] = useState<"saved" | "draft">("draft");
+  const [previewMode, setPreviewMode] = useState<PreviewMode>("draft");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -438,26 +157,26 @@ export default function App() {
   const [historyNotice, setHistoryNotice] = useState<string | null>(null);
   const [restoringSnapshotId, setRestoringSnapshotId] = useState<string | null>(null);
 
+  localeRef.current = locale;
   sessionIdentityRef.current = session
     ? { id: session.id, revision: session.revision }
     : null;
   dialogOpenRef.current = reviewOpen || graphOpen || sourcePanelOpen || historyOpen;
 
   const beginMutation = (kind: MutationKind): MutationOperation | null => {
-    if (mutationOperationRef.current) return null;
-    const operation = { kind, token: Symbol(kind) };
-    mutationOperationRef.current = operation;
-    return operation;
+    return mutationCoordinatorRef.current.begin(kind);
   };
 
   const finishMutation = (operation: MutationOperation) => {
-    if (mutationOperationRef.current?.token === operation.token) {
-      mutationOperationRef.current = null;
-    }
+    mutationCoordinatorRef.current.finish(operation);
   };
 
   const mutationIsCurrent = (operation: MutationOperation): boolean => (
-    mutationOperationRef.current?.token === operation.token
+    mutationCoordinatorRef.current.isCurrent(operation)
+  );
+
+  const currentText: LocalizedText = (zhCN, en, replacements) => (
+    textForLocale(localeRef.current, zhCN, en, replacements)
   );
 
   useEffect(() => {
@@ -484,7 +203,12 @@ export default function App() {
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
       if (dialogOpenRef.current) return;
-      if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === "k") {
+      if (
+        (event.metaKey || event.ctrlKey)
+        && event.key.toLocaleLowerCase() === "k"
+        && searchInputRef.current
+        && !searchInputRef.current.disabled
+      ) {
         event.preventDefault();
         searchInputRef.current?.focus();
         searchInputRef.current?.select();
@@ -526,13 +250,16 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
-    loadWorkspaceResources(locale)
+    loadWorkspaceResources()
       .then(async (resources) => {
         if (cancelled) return;
         setEnvironment(resources.environment);
         setSchema(resources.schema);
         setConfigGraph(resources.graph);
-        setGraphError(resources.graph ? null : resources.graphError ?? text("配置来源暂时不可用。", "Configuration sources are temporarily unavailable."));
+        setGraphError(resources.graph
+          ? null
+          : workspaceGraphError(localeRef.current, resources.failures)
+            ?? currentText("配置来源暂时不可用。", "Configuration sources are temporarily unavailable."));
         const values = initialValues(resources.schema?.options ?? []);
         const candidate = resources.environment
           ? chooseStartupCandidate(
@@ -549,17 +276,18 @@ export default function App() {
               Object.assign(values, valuesForSession(resources.schema.options, opened));
             }
           } catch (openError) {
-            if (!cancelled) setError(errorMessage(locale, openError));
+            if (!cancelled) setError(errorMessage(localeRef.current, openError));
           }
         }
         if (!cancelled) {
-          if (resources.errors.length > 0) setWarning(resources.errors.join("；"));
+          const resourceMessages = workspaceResourceMessages(localeRef.current, resources.failures);
+          if (resourceMessages.length > 0) setWarning(resourceMessages.join(currentText("；", "; ")));
           setBaseline({ ...values });
           setDraft({ ...values });
         }
       })
       .catch((nextError) => {
-        if (!cancelled) setError(errorMessage(locale, nextError));
+        if (!cancelled) setError(errorMessage(localeRef.current, nextError));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -596,7 +324,9 @@ export default function App() {
     return () => {
       canceled = true;
     };
-  }, [locale]);
+  // Changing the interface language must not trigger another filesystem read.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const requestBackgroundPreview = useCallback(async (assetId: string, retry = false) => {
     if (!isDesktop) return;
@@ -673,6 +403,18 @@ export default function App() {
     [schema, session],
   );
 
+  const optionSearchIndex = useMemo(() => new Map(
+    workspaceOptions.map((option) => {
+      const copy = copyForSetting(locale, option.key, option.description);
+      const alternate = copyForSetting(
+        locale === "zh-CN" ? "en" : "zh-CN",
+        option.key,
+        option.description,
+      );
+      return [option.key, `${option.key} ${copy.label} ${copy.summary ?? ""} ${alternate.label} ${alternate.summary ?? ""} ${option.description} ${categoryLabel(locale, option.category)}`.toLocaleLowerCase()];
+    }),
+  ), [locale, workspaceOptions]);
+
   const backgroundOptionMap = useMemo(
     () => new Map(
       workspaceOptions
@@ -698,14 +440,8 @@ export default function App() {
   const backgroundSearchMatch = useMemo(() => {
     const needle = search.trim().toLocaleLowerCase();
     if (!needle) return false;
-    return [...backgroundOptionMap.values()].some((option) => {
-      const copy = copyForSetting(locale, option.key, option.description);
-      const alternate = copyForSetting(locale === "zh-CN" ? "en" : "zh-CN", option.key, option.description);
-      return `${option.key} ${copy.label} ${copy.summary ?? ""} ${alternate.label} ${alternate.summary ?? ""}`
-        .toLocaleLowerCase()
-        .includes(needle);
-    });
-  }, [backgroundOptionMap, locale, search]);
+    return [...backgroundOptionMap.keys()].some((key) => optionSearchIndex.get(key)?.includes(needle));
+  }, [backgroundOptionMap, optionSearchIndex, search]);
 
   const backgroundConfigured = BACKGROUND_IMAGE_SETTING_KEYS.some((key) => configuredSettings.has(key));
   const backgroundContextVisible = (
@@ -736,14 +472,14 @@ export default function App() {
     if (category) writePreference(LAST_CATEGORY_KEY, category);
   }, [category]);
 
+  useEffect(() => {
+    if (!session && search) setSearch("");
+  }, [search, session]);
+
   const visibleOptions = useMemo(() => {
     const needle = search.trim().toLocaleLowerCase();
     const options = workspaceOptions.filter((option) => {
-      const copy = copyForSetting(locale, option.key, option.description);
-      const alternateLocale = locale === "zh-CN" ? "en" : "zh-CN";
-      const alternateCopy = copyForSetting(alternateLocale, option.key, option.description);
-      const searchable = `${option.key} ${copy.label} ${copy.summary ?? ""} ${alternateCopy.label} ${alternateCopy.summary ?? ""} ${option.description} ${categoryLabel(locale, option.category)}`.toLocaleLowerCase();
-      if (needle) return searchable.includes(needle);
+      if (needle) return optionSearchIndex.get(option.key)?.includes(needle) ?? false;
       if (category === "common") return isCommonSetting(option);
       if (category === "configured") return configuredSettings.has(option.key);
       if (category === "catalog") return true;
@@ -756,7 +492,7 @@ export default function App() {
       ));
     }
     return options;
-  }, [workspaceOptions, category, search, configuredSettings, locale]);
+  }, [workspaceOptions, category, search, configuredSettings, optionSearchIndex]);
 
   useLayoutEffect(() => {
     const key = pendingFocusKeyRef.current;
@@ -766,9 +502,28 @@ export default function App() {
     pendingFocusKeyRef.current = null;
     row.scrollIntoView?.({ block: "center" });
     row.querySelector<HTMLElement>(
-      ".setting-input button:not([disabled]), .setting-input input:not([disabled]), .setting-input select:not([disabled])",
+      ".setting-input button:not([disabled]), .setting-input input:not([disabled]), .setting-input select:not([disabled]), button:not([disabled])",
     )?.focus();
   }, [category, search, visibleOptions]);
+
+  const focusFirstSearchResult = () => {
+    const first = (
+      search
+      && (showBackgroundEditor || showBackgroundCompatibility)
+      && visibleOptions.find((option) => isBackgroundSetting(option.key))
+    ) || visibleOptions[0];
+    if (!first) return;
+    const row = document.getElementById(`setting-${first.key}`)
+      ?? (isBackgroundSetting(first.key)
+        ? document.querySelector<HTMLElement>(".background-editor, .background-compatibility")
+        : null);
+    if (!row) return;
+    row.scrollIntoView?.({ block: "center" });
+    const target = row.querySelector<HTMLElement>(
+      ".setting-input button:not([disabled]), .setting-input input:not([disabled]), .setting-input select:not([disabled]), button:not([disabled])",
+    ) ?? row;
+    target.focus();
+  };
 
   const optionGroups = useMemo(() => {
     const grouped = new Map<string, RuntimeOption[]>();
@@ -1120,7 +875,7 @@ export default function App() {
   };
 
   const refreshWorkspace = async (preserveDraft = true): Promise<boolean> => {
-    if (refreshing || applying || switchingCandidateId || mutationOperationRef.current) return false;
+    if (refreshing || applying || switchingCandidateId || mutationCoordinatorRef.current.busy) return false;
     const operation = beginMutation("refresh");
     if (!operation) return false;
     const capturedDraftVersion = draftMutationGuardRef.current.capture();
@@ -1137,13 +892,13 @@ export default function App() {
     setChangePreview(null);
     setReviewFailureCode(null);
     try {
-      const resources = await loadWorkspaceResources(locale);
+      const resources = await loadWorkspaceResources();
       const stopForNewerState = () => {
         if (
           mutationIsCurrent(operation)
           && draftMutationGuardRef.current.isCurrent(capturedDraftVersion)
         ) return false;
-        setWarning(text(
+        setWarning(currentText(
           "读取期间草稿已变化，未应用旧结果。请重试。",
           "The draft changed while reloading, so the older result was not applied. Try again.",
         ));
@@ -1154,7 +909,10 @@ export default function App() {
         setEnvironment(resources.environment);
         setSchema(resources.schema);
         setConfigGraph(resources.graph);
-        setGraphError(resources.graph ? null : resources.graphError ?? text("配置来源暂时不可用。", "Configuration sources are temporarily unavailable."));
+        setGraphError(resources.graph
+          ? null
+          : workspaceGraphError(localeRef.current, resources.failures)
+            ?? currentText("配置来源暂时不可用。", "Configuration sources are temporarily unavailable."));
       };
 
       const previousCandidate = activeCandidate;
@@ -1177,16 +935,17 @@ export default function App() {
         setNotice(null);
         setSourceError(null);
         const reason = !resources.schema
-          ? text("可用设置暂时无法读取", "available settings could not be loaded")
-          : text("原配置位置已经变化", "the original configuration location changed");
+          ? currentText("可用设置暂时无法读取", "available settings could not be loaded")
+          : currentText("原配置位置已经变化", "the original configuration location changed");
+        const resourceMessages = workspaceResourceMessages(localeRef.current, resources.failures);
         setWarning([
-          text(
+          currentText(
             "{reason}；{count} 项草稿仍保留在本次会话中。重新连接原配置，或选择其他配置后再继续。",
             "Because {reason}, {count} draft {noun} remain in this session. Reconnect the original configuration or choose another one to continue.",
             { reason, count: capturedChanges.length, noun: capturedChanges.length === 1 ? "change" : "changes" },
           ),
-          ...resources.errors,
-        ].join(text("；", "; ")));
+          ...resourceMessages,
+        ].join(currentText("；", "; ")));
         return true;
       }
 
@@ -1204,14 +963,14 @@ export default function App() {
           setSession(null);
           if (hasRecoverableDraft) {
             setWarning(
-              text(
+              currentText(
                 "暂时无法重新打开 {target}；{count} 项草稿仍保留在本次会话中。{error}",
                 "Could not reopen {target}. {count} draft {noun} remain in this session. {error}",
                 {
                   target: candidate.label,
                   count: capturedChanges.length,
                   noun: capturedChanges.length === 1 ? "change" : "changes",
-                  error: errorMessage(locale, openError),
+                  error: errorMessage(localeRef.current, openError),
                 },
               ),
             );
@@ -1252,22 +1011,25 @@ export default function App() {
       setDraft(nextDraft);
       setNotice(
         preservedCount > 0
-          ? text(
+          ? currentText(
               "已重新读取配置，保留 {count} 项草稿。请再次检查。",
               "Configuration reloaded with {count} draft {noun} preserved. Review again.",
               { count: preservedCount, noun: preservedCount === 1 ? "change" : "changes" },
             )
-          : text("已重新读取配置。", "Configuration reloaded."),
+          : currentText("已重新读取配置。", "Configuration reloaded."),
       );
       setSourceError(null);
-      if (resources.errors.length > 0) setWarning(resources.errors.join(text("；", "; ")));
+      const resourceMessages = workspaceResourceMessages(localeRef.current, resources.failures);
+      if (resourceMessages.length > 0) {
+        setWarning(resourceMessages.join(currentText("；", "; ")));
+      }
       void refreshBackgroundAssetLibrary(false);
       return true;
     } catch (refreshError) {
-      setError(text(
+      setError(currentText(
         "重新检查失败：{error}",
         "Check failed: {error}",
-        { error: errorMessage(locale, refreshError) },
+        { error: errorMessage(localeRef.current, refreshError) },
       ));
       return false;
     } finally {
@@ -1590,7 +1352,7 @@ export default function App() {
       || applying
       || restoringSnapshotId
       || switchingCandidateId
-      || mutationOperationRef.current
+      || mutationCoordinatorRef.current.busy
     ) return;
     const requestId = reviewGuardRef.current.begin();
     const reviewedChanges = changes.map((change) => ({
@@ -1643,7 +1405,7 @@ export default function App() {
     if (
       session
       && changesRef.current.length > 0
-      && !mutationOperationRef.current
+      && !mutationCoordinatorRef.current.busy
       && !switchingCandidateId
       && !restoringSnapshotId
     ) void openReview();
@@ -1815,6 +1577,8 @@ export default function App() {
     "revision_conflict",
     "ghostty_contract_changed",
     "ghostty_contract_read_only",
+    "ghostty_runtime_changed",
+    "ghostty_runtime_changed_after_write",
     "unknown_session",
     "post_validation_conflict",
     "post_validation_unverified",
@@ -1843,7 +1607,7 @@ export default function App() {
   };
 
   const openHistory = () => {
-    if (mutationOperationRef.current || switchingCandidateId || applying || restoringSnapshotId) return;
+    if (mutationCoordinatorRef.current.busy || switchingCandidateId || applying || restoringSnapshotId) return;
     setHistoryOpen(true);
     setHistoryNotice(null);
     void loadSnapshots();
@@ -2020,172 +1784,56 @@ export default function App() {
 
   if (loading) {
     return (
-      <main className="boot-screen">
+      <main className="boot-screen" aria-busy="true">
         <StudioMark size={38} />
         <strong>Ghostty Studio</strong>
-        <span>{text("正在读取 Ghostty 配置…", "Loading Ghostty configuration…")}</span>
+        <span role="status" aria-live="polite">
+          {text("正在读取 Ghostty 配置…", "Loading Ghostty configuration…")}
+        </span>
       </main>
     );
   }
 
   return (
     <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <div className="brand-mark"><StudioMark size={22} /></div>
-          <strong>Ghostty Studio</strong>
-        </div>
-
-        <div className="sidebar-search search-box">
-          <Search size={15} />
-          <input
-            ref={searchInputRef}
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Escape" && search) {
-                event.preventDefault();
-                setSearch("");
-              }
-            }}
-            placeholder={searchLabel}
-            aria-label={searchLabel}
-            aria-keyshortcuts="Meta+K Control+K"
-            aria-describedby={search ? "search-result-count" : undefined}
-          />
-          {search ? (
-            <button
-              type="button"
-              className="search-clear"
-              aria-label={text("清除搜索", "Clear search")}
-              onClick={() => {
-                setSearch("");
-                searchInputRef.current?.focus();
-              }}
-            >
-              <X size={13} />
-            </button>
-          ) : <kbd>{primaryModifier}K</kbd>}
-        </div>
-
-        <nav className="main-nav" aria-label={text("工作区视图", "Workspace views")}>
-          <span className="nav-title">{text("工作区", "Workspace")}</span>
-          {(["common", "configured"] as const).map((view) => {
-            const Icon = categoryIcon(view);
-            return (
-              <button
-                type="button"
-                key={view}
-                className={!search && category === view ? "active" : ""}
-                aria-current={!search && category === view ? "page" : undefined}
-                onClick={() => selectCategory(view)}
-              >
-                <Icon size={16} />
-                <span>{view === "configured" ? text("已设置", "Configured") : text("常用", "Essentials")}</span>
-              </button>
-            );
-          })}
-        </nav>
-
-        <nav className="category-nav" aria-label={text("设置分类", "Setting categories")}>
-          <span className="nav-title">{text("设置", "Settings")}</span>
-          {categories.map(([name]) => {
-            const Icon = categoryIcon(name);
-            return (
-              <button
-                type="button"
-                key={name}
-                className={!search && category === name ? "active" : ""}
-                aria-current={!search && category === name ? "page" : undefined}
-                onClick={() => selectCategory(name)}
-              >
-                <Icon size={16} />
-                <span>{categoryLabel(locale, name)}</span>
-              </button>
-            );
-          })}
-          <button
-            type="button"
-            className={!search && category === "catalog" ? "active" : ""}
-            aria-current={!search && category === "catalog" ? "page" : undefined}
-            onClick={() => selectCategory("catalog")}
-          >
-            <BookOpen size={16} />
-            <span>{text("全部设置", "All settings")}</span>
-          </button>
-        </nav>
-
-        <div className="sidebar-footer">
-          <button
-            type="button"
-            className="source-context"
-            onClick={() => setSourcePanelOpen(true)}
-            disabled={switchingCandidateId !== null || applying || restoringSnapshotId !== null}
-          >
-            <FileText size={16} />
-            <span>
-              <strong>{activeCandidate?.label ?? text("选择配置", "Choose configuration")}</strong>
-              <small>{isDesktop
-                ? `Ghostty ${environment?.ghostty.version ?? text("未连接", "Not connected")}`
-                : text("试用模式", "Try mode")}</small>
-            </span>
-            <ChevronRight size={14} />
-          </button>
-          <details ref={utilityMenuRef} className="utility-menu">
-            <summary><MoreHorizontal size={16} /><span>{text("更多", "More")}</span></summary>
-            <div className="utility-menu__popover">
-              <button type="button" disabled={switchingCandidateId !== null || applying || restoringSnapshotId !== null} onClick={() => { utilityMenuRef.current?.removeAttribute("open"); openHistory(); }}><History size={15} /> {text("恢复点", "Restore points")}</button>
-              <button type="button" disabled={switchingCandidateId !== null || applying || restoringSnapshotId !== null} onClick={() => { utilityMenuRef.current?.removeAttribute("open"); setSourcePanelOpen(true); }}><Layers3 size={15} /> {text("写入位置", "Write location")}</button>
-              <button type="button" onClick={() => { utilityMenuRef.current?.removeAttribute("open"); setGraphOpen(true); }}><FileCog size={15} /> {text("加载顺序", "Load order")}</button>
-            </div>
-          </details>
-        </div>
-      </aside>
+      <StudioSidebar
+        searchInputRef={searchInputRef}
+        utilityMenuRef={utilityMenuRef}
+        search={search}
+        searchLabel={searchLabel}
+        primaryModifier={primaryModifier}
+        workspaceReady={Boolean(session)}
+        category={category}
+        categories={categories}
+        locale={locale}
+        activeCandidate={activeCandidate}
+        desktop={isDesktop}
+        ghosttyVersion={environment?.ghostty.version ?? null}
+        busy={switchingCandidateId !== null || applying || restoringSnapshotId !== null}
+        text={text}
+        onSearch={setSearch}
+        onFocusFirstResult={focusFirstSearchResult}
+        onSelectCategory={selectCategory}
+        onOpenHistory={openHistory}
+        onOpenSource={() => setSourcePanelOpen(true)}
+        onOpenGraph={() => setGraphOpen(true)}
+      />
 
       <main className="workspace">
-        <header className="studio-toolbar">
-          <div className="studio-toolbar__title">
-            <strong>{activeCandidate?.label ?? pageTitle}</strong>
-            {activeCandidate && <span>{session?.readOnly ? text("只读配置", "Read-only configuration") : text("当前写入位置", "Current write location")}</span>}
-          </div>
-          <div className="studio-toolbar__actions">
-            <label className="language-picker">
-              <Globe2 size={14} aria-hidden="true" />
-              <span className="sr-only">{text("界面语言", "Interface language")}</span>
-              <select
-                value={preference}
-                aria-label={text("界面语言", "Interface language")}
-                onChange={(event) => setPreference(event.target.value as LanguagePreference)}
-              >
-                <option value="system">{text("跟随系统", "System")}</option>
-                <option value="zh-CN">简体中文</option>
-                <option value="en">English</option>
-              </select>
-            </label>
-            <button
-              type="button"
-              className="toolbar-icon"
-              aria-label={reloadLabel}
-              aria-busy={refreshing}
-              title={reloadLabel}
-              onClick={() => void refreshWorkspace(true)}
-              disabled={refreshing || applying || switchingCandidateId !== null}
-            >
-              <RefreshCw size={15} className={refreshing ? "spin" : ""} />
-            </button>
-            <span
-              className={`connection-state connection-state--${workspaceSummary.state}`}
-              role="status"
-              aria-label={connectionLabel}
-              title={connectionLabel}
-            >
-              <i /><span aria-hidden="true">{connectionLabel}</span>
-            </span>
-            <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
-              {refreshing ? reloadLabel : ""}
-            </span>
-          </div>
-        </header>
+        <StudioToolbar
+          activeLabel={activeCandidate?.label}
+          fallbackTitle={pageTitle}
+          readOnly={session?.readOnly ?? false}
+          preference={preference}
+          refreshing={refreshing}
+          busy={applying || switchingCandidateId !== null}
+          reloadLabel={reloadLabel}
+          connectionLabel={connectionLabel}
+          connectionState={workspaceSummary.state}
+          text={text}
+          onPreferenceChange={setPreference}
+          onRefresh={() => void refreshWorkspace(true)}
+        />
 
         {!session ? (
           <div className="setup-container" aria-busy={refreshing}>
@@ -2246,9 +1894,16 @@ export default function App() {
                     summaryLabel={text("显示或隐藏外观预览", "Show or hide appearance preview")}
                     bodyClassName="inline-preview__body"
                   >
-                    <TerminalPreview
-                      values={previewMode === "draft" ? previewValues : savedPreviewValues}
-                      backgroundImage={previewMode === "draft" ? draftBackgroundPreview : savedBackgroundPreview}
+                    <AppearancePreview
+                      variant="inline"
+                      mode={previewMode}
+                      effectiveKnown={session.effectiveValuesKnown}
+                      savedValues={savedPreviewValues}
+                      draftValues={previewValues}
+                      savedBackgroundImage={savedBackgroundPreview}
+                      draftBackgroundImage={draftBackgroundPreview}
+                      ignoredChangeCount={previewIgnoredKeys.length}
+                      onModeChange={setPreviewMode}
                     />
                   </Disclosure>
                 )}
@@ -2288,7 +1943,12 @@ export default function App() {
                 )}
 
                 {showBackgroundCompatibility && (
-                  <section className="background-compatibility" aria-labelledby="background-compatibility-title">
+                  <section
+                    id="setting-background-image"
+                    className="background-compatibility"
+                    aria-labelledby="background-compatibility-title"
+                    tabIndex={-1}
+                  >
                     <h2 id="background-compatibility-title">{text("背景图片暂不可编辑", "Background image editing is unavailable")}</h2>
                     <p>{text(
                       "Ghostty 更新了此设置；现有配置未更改。",
@@ -2309,6 +1969,7 @@ export default function App() {
                           const showAsReference = category === "catalog"
                             || !isGenericallyEditable(option)
                             || (configured?.occurrenceCount ?? 0) > 1
+                            || configured?.valueExposure === "protected"
                             || (isDesktop && session.readOnly);
                           return showAsReference ? (
                             <ReferenceSettingRow
@@ -2372,41 +2033,16 @@ export default function App() {
 
             {showPreview && (
               <aside className="preview-pane">
-                <div className="preview-heading">
-                  <strong>{text("外观预览", "Appearance preview")}</strong>
-                  <div className="preview-segment" aria-label={text("预览版本", "Preview version")}>
-                    <button
-                      type="button"
-                      className={previewMode === "saved" ? "active" : ""}
-                      onClick={() => setPreviewMode("saved")}
-                    >
-                      {session.effectiveValuesKnown
-                        ? text("最终配置", "Effective")
-                        : text("当前文件", "This file")}
-                    </button>
-                    <button
-                      type="button"
-                      className={previewMode === "draft" ? "active" : ""}
-                      onClick={() => setPreviewMode("draft")}
-                    >
-                      {text("修改后", "Draft")}
-                    </button>
-                  </div>
-                </div>
-                <TerminalPreview
-                  values={previewMode === "draft" ? previewValues : savedPreviewValues}
-                  backgroundImage={previewMode === "draft" ? draftBackgroundPreview : savedBackgroundPreview}
+                <AppearancePreview
+                  mode={previewMode}
+                  effectiveKnown={session.effectiveValuesKnown}
+                  savedValues={savedPreviewValues}
+                  draftValues={previewValues}
+                  savedBackgroundImage={savedBackgroundPreview}
+                  draftBackgroundImage={draftBackgroundPreview}
+                  ignoredChangeCount={previewIgnoredKeys.length}
+                  onModeChange={setPreviewMode}
                 />
-                <p className="preview-note">{previewIgnoredKeys.length > 0
-                  ? text(
-                      "{count} 项修改未显示，因为会被其他配置覆盖。",
-                      "{count} {noun} not shown because another configuration overrides them.",
-                      {
-                        count: previewIgnoredKeys.length,
-                        noun: previewIgnoredKeys.length === 1 ? "change is" : "changes are",
-                      },
-                    )
-                  : text("仅供预览，最终效果以 Ghostty 为准。", "Preview only. Final appearance may vary in Ghostty.")}</p>
               </aside>
             )}
           </div>
@@ -2486,7 +2122,13 @@ export default function App() {
             onUseSuggestedSource={(candidateId) => void moveDraftToCandidate(candidateId)}
           />
         ) : graphOpen ? (
-          <ConfigGraphPanel graph={configGraph} onClose={() => setGraphOpen(false)} />
+          <ConfigGraphPanel
+            graph={configGraph}
+            loading={refreshing}
+            error={graphError}
+            onClose={() => setGraphOpen(false)}
+            onRetry={() => void refreshWorkspace(true)}
+          />
         ) : sourcePanelOpen ? (
           <ConfigSourcePanel
             environment={environment}

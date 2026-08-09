@@ -96,8 +96,8 @@ pub fn ghostty_executable_candidates() -> Vec<PathBuf> {
     candidates
         .into_iter()
         .filter(|path| seen.insert(path.clone()))
-        // GhosttyProbe is serialized as UTF-8 and later reopens this exact
-        // executable. Reject lossy identities instead of running another path.
+        // Runtime identity is represented by this exact UTF-8 path before it is
+        // canonicalized and hashed. Never substitute a different lossy path.
         .filter(|path| candidate_path_supported(path))
         .filter(|path| is_executable_file(path))
         .collect()
@@ -116,14 +116,12 @@ fn candidate(
     let symlink = symlink_metadata
         .as_ref()
         .is_some_and(|item| item.file_type().is_symlink());
-    let writable = if exists {
-        metadata
-            .as_ref()
-            .is_some_and(|item| permissions_allow_write(item.permissions()))
+    let writable = if symlink {
+        false
+    } else if exists {
+        has_write_access(&path) && path.parent().is_some_and(has_directory_creation_access)
     } else {
-        nearest_existing_parent(&path)
-            .and_then(|parent| fs::metadata(parent).ok())
-            .is_some_and(|item| permissions_allow_write(item.permissions()))
+        nearest_existing_parent(&path).is_some_and(has_directory_creation_access)
     };
     let path_string = path.to_string_lossy().to_string();
     ConfigCandidate {
@@ -145,16 +143,6 @@ pub fn include_candidate(
     load_index: usize,
     observed_symlink: bool,
 ) -> ConfigCandidate {
-    let display_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .filter(|name| !name.is_empty())
-        .unwrap_or("included config");
-    let safe_name = display_name
-        .chars()
-        .filter(|character| !character.is_control())
-        .take(80)
-        .collect::<String>();
     let format = if path.extension().and_then(|extension| extension.to_str()) == Some("ghostty") {
         "ghostty"
     } else {
@@ -162,7 +150,7 @@ pub fn include_candidate(
     };
     let mut result = candidate(
         path,
-        &format!("Include · {safe_name}"),
+        &format!("Include · layer {}", load_index + 1),
         "include",
         format,
         u8::try_from(load_index.saturating_add(4)).unwrap_or(u8::MAX),
@@ -215,16 +203,38 @@ fn is_executable_file(path: &Path) -> bool {
     }
 }
 
-fn permissions_allow_write(permissions: fs::Permissions) -> bool {
+fn has_write_access(path: &Path) -> bool {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        permissions.mode() & 0o222 != 0
+        unix_access(path, libc::W_OK)
     }
     #[cfg(not(unix))]
     {
-        !permissions.readonly()
+        fs::metadata(path).is_ok_and(|metadata| !metadata.permissions().readonly())
     }
+}
+
+fn has_directory_creation_access(path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        unix_access(path, libc::W_OK | libc::X_OK)
+    }
+    #[cfg(not(unix))]
+    {
+        fs::metadata(path)
+            .is_ok_and(|metadata| metadata.is_dir() && !metadata.permissions().readonly())
+    }
+}
+
+#[cfg(unix)]
+fn unix_access(path: &Path, mode: libc::c_int) -> bool {
+    use std::{ffi::CString, os::unix::ffi::OsStrExt};
+
+    let Ok(path) = CString::new(path.as_os_str().as_bytes()) else {
+        return false;
+    };
+    // SAFETY: `path` is NUL-terminated and valid for the duration of the call.
+    unsafe { libc::access(path.as_ptr(), mode) == 0 }
 }
 
 #[cfg(test)]
@@ -248,5 +258,22 @@ mod tests {
 
         let path = Path::new(OsStr::from_bytes(b"/tmp/ghostty-\xff/config"));
         assert!(!candidate_path_supported(path));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_candidates_are_never_reported_writable() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("target");
+        let link = directory.path().join("config");
+        fs::write(&target, b"").unwrap();
+        symlink(&target, &link).unwrap();
+
+        let result = candidate(link, "Config", "test", "legacy", 0);
+        assert!(result.exists);
+        assert!(result.symlink);
+        assert!(!result.writable);
     }
 }

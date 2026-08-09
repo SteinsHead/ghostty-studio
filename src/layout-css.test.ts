@@ -34,6 +34,22 @@ function withoutConditionalBlocks(source: string): string {
 
 const desktopCss = withoutConditionalBlocks(css);
 
+function conditionalBlock(header: string): string {
+  const start = css.indexOf(header);
+  expect(start, `missing conditional rule: ${header}`).toBeGreaterThanOrEqual(0);
+  const blockStart = css.indexOf("{", start);
+  expect(blockStart, `unterminated conditional rule: ${header}`).toBeGreaterThan(start);
+  let depth = 1;
+  let index = blockStart + 1;
+  while (index < css.length && depth > 0) {
+    if (css[index] === "{") depth += 1;
+    if (css[index] === "}") depth -= 1;
+    index += 1;
+  }
+  expect(depth, `unterminated conditional block: ${header}`).toBe(0);
+  return css.slice(start, index);
+}
+
 function ruleBlocks(header: string): string[] {
   const escapedHeader = header.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const ruleStart = new RegExp(`^${escapedHeader} \\{`, "gm");
@@ -178,5 +194,24 @@ describe("layout contract", () => {
     expectDeclaration(".workspace-feedback:empty", "display", "none");
     expectDeclaration(".workspace-feedback:empty", "margin", "0");
     expectDeclaration('.switch[aria-checked="true"]::before', "background", "var(--accent-strong)");
+  });
+
+  it("keeps the manually verified 1440, 1000, and 760 px layout modes distinct", () => {
+    // These assertions preserve the DOM/CSS contract exercised during manual QA at each width.
+    expectDeclaration(".inline-preview", "display", "none");
+
+    const wide = conditionalBlock("@media (min-width: 1151px)");
+    expect(wide).toContain(".draft-dock--settings-column");
+    expect(wide).toContain("right: calc(var(--preview-column-width) + var(--space-6))");
+
+    const compact = conditionalBlock("@media (max-width: 1150px)");
+    expect(compact).toContain("grid-template-columns: 208px minmax(0, 1fr)");
+    expect(compact).toMatch(/\.preview-pane\s*\{[^}]*display: none/s);
+    expect(compact).toMatch(/\.inline-preview\s*\{[^}]*display: block/s);
+
+    const narrow = conditionalBlock("@media (max-width: 760px)");
+    expect(narrow).toMatch(/\.workspace\s*\{[^}]*grid-template-rows: auto minmax\(0, 1fr\)/s);
+    expect(narrow).toMatch(/\.studio-toolbar\s*\{[^}]*flex-wrap: wrap/s);
+    expect(narrow).toContain("max-height: calc(100dvh - 24px)");
   });
 });

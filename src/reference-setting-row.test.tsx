@@ -53,4 +53,18 @@ describe("reference setting states", () => {
     expect(container.textContent).toContain("选择可写配置后即可调整");
     expect(container.querySelector(".reference-setting-row__state button")).toBeNull();
   });
+
+  it("keeps an invalid existing scalar value out of the editor", () => {
+    act(() => root.render(
+      <ReferenceSettingRow
+        option={background}
+        configured={{ key: background.key, occurrenceCount: 1, valueExposure: "protected" }}
+        onAdjust={() => undefined}
+      />,
+    ));
+
+    expect(container.textContent).toContain("在配置文件中调整");
+    expect(container.textContent).toContain("原值已保留");
+    expect(container.querySelector(".reference-setting-row__state button")).toBeNull();
+  });
 });
