@@ -10,6 +10,7 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
 Style: Title,SF Pro Display,50,&H00F7F8FA,&H000000FF,&H00101217,&H8A080A0E,-1,0,0,0,100,100,0,0,3,1,0,8,170,170,54,1
 Style: Tag,SF Pro Display,23,&H005AF29B,&H000000FF,&H00101217,&HA0080A0E,-1,0,0,0,100,100,1,0,3,1,0,7,138,80,74,1
 Style: Caption,SF Pro Display,34,&H00F4F6F8,&H000000FF,&H00101217,&HC00A0C11,-1,0,0,0,100,100,0,0,3,1,0,2,170,170,24,1
+Style: CaptionTop,SF Pro Display,34,&H00F4F6F8,&H000000FF,&H00101217,&HC00A0C11,-1,0,0,0,100,100,0,0,3,1,0,8,170,170,88,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -20,6 +21,6 @@ Dialogue: 2,0:00:04.30,0:00:08.60,Caption,,0,0,0,,Add a background image and pre
 Dialogue: 1,0:00:08.60,0:00:12.50,Tag,,0,0,0,,{\fad(180,220)}VISIBILITY · FIT · POSITION
 Dialogue: 2,0:00:08.60,0:00:12.50,Caption,,0,0,0,,Tune visibility, fit, and position with immediate feedback.
 Dialogue: 1,0:00:12.50,0:00:17.80,Tag,,0,0,0,,{\fad(180,220)}EXACT DIFF · GHOSTTY VALIDATION
-Dialogue: 2,0:00:12.50,0:00:17.80,Caption,,0,0,0,,Then inspect the exact diff, validate it with Ghostty, and save with a restore point.
+Dialogue: 2,0:00:12.50,0:00:17.80,CaptionTop,,0,0,0,,Then inspect the exact diff, validate it with Ghostty, and save with a restore point.
 Dialogue: 1,0:00:17.80,0:00:22.70,Tag,,0,0,0,,{\fad(180,300)}LOCAL SAVE · RESTORE POINT
 Dialogue: 2,0:00:17.80,0:00:22.70,Caption,,0,0,0,,Your comments, ordering, and config sources stay intact.

@@ -102,6 +102,8 @@ supports the exact claim.
   validate/save → visible result.
 - Use the current release build and synthetic config. Keep pointer motion deliberate; no fake terminal
   output, speed ramps that hide waiting, or effects that obscure the UI.
+- Capture at 60fps with the pointer rendered in the same source frame as the app. Resolve targets from
+  their live bounds, and verify the pointer hotspot is inside each control when it is activated.
 - Provide burned-in captions, an English narration track, alt text, and a silent MP4/GIF fallback.
 - Social card: 1200 × 630, one product view, one outcome sentence, no tiny feature list.
 

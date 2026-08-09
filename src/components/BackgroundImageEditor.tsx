@@ -585,20 +585,28 @@ export function BackgroundImageEditor({
 
         <fieldset id="setting-background-image-fit" className="background-control" tabIndex={-1}>
           <legend>{text("适配方式", "Fit")}</legend>
-          <div className="fit-options">
+          <div className="fit-options" role="radiogroup" aria-label={text("选择图片适配方式", "Choose image fit")}>
             {FITS.map((choice) => (
-              <label className={fit === choice ? "is-selected" : ""} key={choice}>
-                <input
-                  type="radio"
-                  name="background-fit"
-                  value={choice}
-                  checked={fit === choice}
-                  disabled={controlsDisabled || !canEdit("background-image-fit")}
-                  onChange={() => onChange("background-image-fit", choice)}
-                />
+              <button
+                type="button"
+                role="radio"
+                aria-checked={fit === choice}
+                className={fit === choice ? "is-selected" : ""}
+                key={choice}
+                disabled={controlsDisabled || !canEdit("background-image-fit")}
+                onClick={() => onChange("background-image-fit", choice)}
+                onKeyDown={(event) => moveRadioSelection(
+                  event,
+                  FITS.indexOf(choice),
+                  FITS.length,
+                  2,
+                  (nextIndex) => onChange("background-image-fit", FITS[nextIndex]),
+                )}
+                tabIndex={fit === choice ? 0 : -1}
+              >
                 <i className={`fit-symbol fit-symbol--${choice}`} />
                 <span>{localizedSettingChoice(locale, "background-image-fit", choice)}</span>
-              </label>
+              </button>
             ))}
           </div>
         </fieldset>

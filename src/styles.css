@@ -25,6 +25,64 @@
   color: var(--text);
 }
 
+.recording-demo,
+.recording-demo * {
+  cursor: none !important;
+}
+
+.recording-cursor {
+  position: fixed;
+  z-index: 10000;
+  width: 28px;
+  height: 34px;
+  pointer-events: none;
+  transform: translate(-1.5px, -1.5px);
+  transform-origin: 1.5px 1.5px;
+  transition: transform 90ms ease-out;
+  filter: drop-shadow(0 2px 3px rgb(0 0 0 / 55%));
+}
+
+.recording-cursor.is-pressed {
+  transform: translate(-1.5px, -1.5px) scale(0.9);
+}
+
+.recording-cursor svg {
+  display: block;
+  width: 28px;
+  height: 34px;
+  overflow: visible;
+}
+
+.recording-cursor path {
+  fill: #fff;
+  stroke: #11151b;
+  stroke-linejoin: round;
+  stroke-width: 2.4px;
+}
+
+.recording-click-pulse {
+  position: fixed;
+  z-index: 9999;
+  width: 10px;
+  height: 10px;
+  pointer-events: none;
+  border: 2px solid rgb(145 216 79 / 90%);
+  border-radius: 50%;
+  animation: recording-click 260ms ease-out both;
+}
+
+@keyframes recording-click {
+  from {
+    opacity: 0.95;
+    transform: translate(-50%, -50%) scale(0.35);
+  }
+
+  to {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(2.9);
+  }
+}
+
 * {
   box-sizing: border-box;
 }
@@ -2842,7 +2900,7 @@ textarea:focus-visible {
   margin-top: 10px;
 }
 
-.fit-options label {
+.fit-options button {
   display: flex;
   min-width: 0;
   min-height: 36px;
@@ -2851,27 +2909,17 @@ textarea:focus-visible {
   padding: 6px 8px;
   border: 1px solid var(--border-soft);
   border-radius: 7px;
+  background: transparent;
   color: var(--text-muted);
   font-size: 9px;
+  text-align: left;
   cursor: pointer;
 }
 
-.fit-options label.is-selected {
+.fit-options button.is-selected {
   border-color: color-mix(in srgb, var(--accent) 42%, transparent);
   background: var(--accent-soft);
   color: var(--text);
-}
-
-.fit-options input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-}
-
-.fit-options label:focus-within {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
 }
 
 .fit-symbol {
@@ -2983,7 +3031,7 @@ textarea:focus-visible {
 @media (forced-colors: active) {
   .background-editor--modified,
   .background-asset.is-selected,
-  .fit-options label.is-selected,
+  .fit-options button.is-selected,
   .position-grid button.is-selected,
   .background-effect-callout--warning {
     border-color: Highlight;

@@ -17,6 +17,7 @@ import { ConfigGraphPanel } from "./components/ConfigGraphPanel";
 import { Disclosure } from "./components/Disclosure";
 import { Presence } from "./components/Presence";
 import { ReviewPanel } from "./components/ReviewPanel";
+import { RecordingCursor } from "./components/RecordingCursor";
 import { ReferenceSettingRow } from "./components/ReferenceSettingRow";
 import { SetupPage } from "./components/SetupPage";
 import { SettingRow } from "./components/SettingRow";
@@ -79,6 +80,7 @@ import {
   type MutationKind,
   type MutationOperation,
 } from "./studioState";
+import { holdRecordingTransition, recordingDemoEnabled } from "./recordingDemo";
 import {
   loadWorkspaceResources,
   workspaceGraphError,
@@ -300,7 +302,7 @@ export default function App() {
   }, []);
 
   const refreshBackgroundAssetLibrary = useCallback(async (reportError = true) => {
-    if (!isDesktop) return false;
+    if (!isDesktop && !recordingDemoEnabled) return false;
     try {
       const assets = await backend.listBackgroundAssets();
       setBackgroundAssets(assets);
@@ -313,7 +315,7 @@ export default function App() {
 
   useEffect(() => {
     let canceled = false;
-    if (!isDesktop) return undefined;
+    if (!isDesktop && !recordingDemoEnabled) return undefined;
     backend.listBackgroundAssets()
       .then((assets) => {
         if (!canceled) setBackgroundAssets(assets);
@@ -329,7 +331,7 @@ export default function App() {
   }, []);
 
   const requestBackgroundPreview = useCallback(async (assetId: string, retry = false) => {
-    if (!isDesktop) return;
+    if (!isDesktop && !recordingDemoEnabled) return;
     if (backgroundPreviewRequestsRef.current.has(assetId)) return;
     const version = (backgroundPreviewVersionsRef.current.get(assetId) ?? 0) + 1;
     backgroundPreviewVersionsRef.current.set(assetId, version);
@@ -576,7 +578,7 @@ export default function App() {
     schema,
     session,
     configGraph,
-    isDesktop,
+    isDesktop || recordingDemoEnabled,
     locale,
   ), [environment, schema, session, configGraph, locale]);
 
@@ -714,7 +716,7 @@ export default function App() {
   }, []);
 
   const importBackgroundImages = useCallback(async () => {
-    if (!isDesktop || backgroundImporting || session?.readOnly) return;
+    if ((!isDesktop && !recordingDemoEnabled) || backgroundImporting || session?.readOnly) return;
     setBackgroundImporting(true);
     setBackgroundFeedback(null);
     try {
@@ -786,7 +788,7 @@ export default function App() {
   ]);
 
   const deleteBackgroundImage = useCallback(async (assetId: string) => {
-    if (!isDesktop || session?.readOnly || backgroundDeletingAssetRef.current !== null) return;
+    if ((!isDesktop && !recordingDemoEnabled) || session?.readOnly || backgroundDeletingAssetRef.current !== null) return;
     const asset = backgroundAssets.find((item) => item.id === assetId);
     if (!asset || asset.usage.status !== "available") {
       setSourcePanelOpen(true);
@@ -1360,6 +1362,7 @@ export default function App() {
       before: [...change.before],
       after: [...change.after],
     }));
+    if (recordingDemoEnabled) await holdRecordingTransition();
     setReviewOpen(true);
     setReviewLoading(true);
     setReviewFailureCode(null);
@@ -1715,7 +1718,7 @@ export default function App() {
   const reloadLabel = refreshing
     ? text("正在重新读取 Ghostty 配置…", "Reloading Ghostty configuration…")
     : text("重新读取 Ghostty 配置", "Reload Ghostty configuration");
-  const connectionLabel = isDesktop
+  const connectionLabel = isDesktop || recordingDemoEnabled
     ? `Ghostty ${environment?.ghostty.version ?? text("未找到", "Not found")}`
     : text("试用模式", "Try mode");
 
@@ -1807,7 +1810,7 @@ export default function App() {
         categories={categories}
         locale={locale}
         activeCandidate={activeCandidate}
-        desktop={isDesktop}
+        desktop={isDesktop || recordingDemoEnabled}
         ghosttyVersion={environment?.ghostty.version ?? null}
         busy={switchingCandidateId !== null || applying || restoringSnapshotId !== null}
         text={text}
@@ -1919,8 +1922,8 @@ export default function App() {
                     baselineValues={baseline}
                     effectiveValues={effectiveBaseline}
                     options={backgroundOptionMap}
-                    disabled={!isDesktop || session.readOnly || refreshing || switchingCandidateId !== null || applying || restoringSnapshotId !== null}
-                    desktop={isDesktop}
+                    disabled={(!isDesktop && !recordingDemoEnabled) || session.readOnly || refreshing || switchingCandidateId !== null || applying || restoringSnapshotId !== null}
+                    desktop={isDesktop || recordingDemoEnabled}
                     importing={backgroundImporting}
                     deletingAssetId={backgroundDeletingAssetId}
                     feedback={backgroundFeedback}
@@ -2069,7 +2072,7 @@ export default function App() {
                   onClick={() => void openReview()}
                   disabled={refreshing || reviewLoading || applying || switchingCandidateId !== null || restoringSnapshotId !== null}
                 >
-                  {reviewLoading ? text("正在检查…", "Checking…") : isDesktop ? text("检查并保存", "Review & save") : text("查看更改", "Review changes")}
+                  {reviewLoading ? text("正在检查…", "Checking…") : isDesktop || recordingDemoEnabled ? text("检查并保存", "Review & save") : text("查看更改", "Review changes")}
                   <kbd>{primaryModifier}S</kbd>
                 </button>
               </div>
@@ -2113,7 +2116,7 @@ export default function App() {
             canRecover={reviewCanRecover}
             readOnly={session?.readOnly ?? true}
             targetLabel={activeCandidate?.label}
-            previewOnly={!isDesktop}
+            previewOnly={!isDesktop && !recordingDemoEnabled}
             backgroundAssetNames={Object.fromEntries(backgroundAssets.map((asset) => [asset.id, asset.displayName]))}
             onClose={closeReview}
             onApply={applyReviewedChanges}
@@ -2160,6 +2163,7 @@ export default function App() {
           />
         ) : null}
       </Presence>
+      <RecordingCursor />
     </div>
   );
 }
