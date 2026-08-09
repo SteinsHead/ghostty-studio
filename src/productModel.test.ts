@@ -14,7 +14,6 @@ import type { ConfigSession } from "./types";
 const session: ConfigSession = {
   id: "session",
   candidateId: demoEnvironment.candidates[0].id,
-  path: demoEnvironment.candidates[0].path,
   revision: "revision",
   readOnly: false,
   values: {},

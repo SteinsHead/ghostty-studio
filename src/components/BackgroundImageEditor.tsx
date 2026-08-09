@@ -255,7 +255,12 @@ export function BackgroundImageEditor({
   };
 
   return (
-    <section className={`background-editor ${modified ? "background-editor--modified" : ""}`} aria-labelledby="background-editor-title">
+    <section
+      id="setting-background-image"
+      className={`background-editor ${modified ? "background-editor--modified" : ""}`}
+      aria-labelledby="background-editor-title"
+      tabIndex={-1}
+    >
       <header className="background-editor__header">
         <div>
           <h2 id="background-editor-title">
@@ -536,7 +541,11 @@ export function BackgroundImageEditor({
       )}
 
       {showControls && <div className="background-controls" aria-disabled={controlsDisabled}>
-        <div className="background-control background-control--opacity">
+        <div
+          id="setting-background-image-opacity"
+          className="background-control background-control--opacity"
+          tabIndex={-1}
+        >
           <div className="background-control__label">
             <div><strong>{text("图片可见度", "Image visibility")}</strong><span>{text("相对于终端背景", "Relative to the terminal background")}</span></div>
             <label className="percentage-control">
@@ -564,6 +573,7 @@ export function BackgroundImageEditor({
             value={Math.min(opacity, 2)}
             disabled={controlsDisabled || !canEdit("background-image-opacity")}
             aria-label={text("图片可见度滑块", "Image visibility slider")}
+            aria-valuetext={`${Math.round(opacity * 100)}%`}
             style={{ "--range-progress": `${Math.min(opacity / 2, 1) * 100}%` } as CSSProperties}
             onChange={(event) => onChange("background-image-opacity", event.target.value)}
           />
@@ -573,7 +583,7 @@ export function BackgroundImageEditor({
           )}</small>}
         </div>
 
-        <fieldset className="background-control">
+        <fieldset id="setting-background-image-fit" className="background-control" tabIndex={-1}>
           <legend>{text("适配方式", "Fit")}</legend>
           <div className="fit-options">
             {FITS.map((choice) => (
@@ -593,7 +603,11 @@ export function BackgroundImageEditor({
           </div>
         </fieldset>
 
-        <fieldset className="background-control background-control--position">
+        <fieldset
+          id="setting-background-image-position"
+          className="background-control background-control--position"
+          tabIndex={-1}
+        >
           <legend>{text("图片位置", "Position")}</legend>
           <div className="position-grid" role="radiogroup" aria-label={text("选择图片位置", "Choose image position")}>
             {POSITIONS.map((choice, index) => (
@@ -619,7 +633,11 @@ export function BackgroundImageEditor({
           </div>
         </fieldset>
 
-        <div className="background-control background-control--toggle">
+        <div
+          id="setting-background-image-repeat"
+          className="background-control background-control--toggle"
+          tabIndex={-1}
+        >
           <div><strong>{text("平铺图片", "Tile image")}</strong><span>{text("图片未铺满时重复显示", "Repeat when the image leaves empty space")}</span></div>
           <button
             type="button"

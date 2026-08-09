@@ -1,15 +1,12 @@
-use std::{collections::BTreeMap, path::Path};
+use std::collections::BTreeMap;
 
 use sha2::{Digest, Sha256};
 
 use crate::{
-    domain::{capability::Catalog, ghostty},
+    domain::{capability::Catalog, ghostty, runtime_contract},
     error::CommandError,
     models::{RuntimeCapability, RuntimeOption, RuntimeSchema},
 };
-
-const AUDITED_SCHEMA_HASH: &str =
-    "5e36480fe2ec3d510ffc32de84c617fbaca10e1330c097185301b51ab9c10e6c";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ObservedEntry {
@@ -26,18 +23,43 @@ struct ObservedOption {
     repeatable: bool,
 }
 
-pub fn load(executable: &Path, version: Option<String>) -> Result<RuntimeSchema, CommandError> {
+pub fn load(
+    executable: &ghostty::ExecutableIdentity,
+    version: Option<String>,
+    channel: Option<String>,
+) -> Result<RuntimeSchema, CommandError> {
     let document = ghostty::show_default_config_with_docs(executable)?;
+    build(&document, version, channel, std::env::consts::OS)
+}
+
+fn build(
+    document: &str,
+    version: Option<String>,
+    channel: Option<String>,
+    runtime_platform: &str,
+) -> Result<RuntimeSchema, CommandError> {
     let schema_hash = hex(&Sha256::digest(document.as_bytes()));
     let catalog = Catalog::bundled()?;
-    let options = build_runtime_options(
-        parse_observed_document(&document),
+    let mut options = build_runtime_options(
+        parse_observed_document(document),
         version.as_deref(),
-        std::env::consts::OS,
+        runtime_platform,
         &catalog,
     );
-    let diagnostics =
-        compatibility_diagnostics(version.as_deref(), &schema_hash, &options, &catalog);
+    let restriction = runtime_contract::restriction_reason(
+        version.as_deref(),
+        channel.as_deref(),
+        runtime_platform,
+        &schema_hash,
+    );
+    runtime_contract::apply_write_gate(&mut options, restriction);
+    let diagnostics = compatibility_diagnostics(
+        version.as_deref(),
+        channel.as_deref(),
+        runtime_platform,
+        &schema_hash,
+        restriction,
+    );
     Ok(RuntimeSchema {
         ghostty_version: version,
         schema_hash,
@@ -187,31 +209,28 @@ fn build_runtime_options(
 
 fn compatibility_diagnostics(
     version: Option<&str>,
+    channel: Option<&str>,
+    runtime_platform: &str,
     schema_hash: &str,
-    options: &[RuntimeOption],
-    catalog: &Catalog,
+    restriction: Option<&str>,
 ) -> Vec<String> {
-    if !catalog.supports_version(version) {
-        return vec![format!(
-            "Ghostty {} 暂不支持编辑。",
-            version.unwrap_or("未知版本")
-        )];
-    }
-    if schema_hash == AUDITED_SCHEMA_HASH {
-        return Vec::new();
-    }
-
-    let changed = options
-        .iter()
-        .filter(|option| option.capability.reason.as_deref() == Some("setting-changed"))
-        .count();
-    let ready = options.iter().filter(|option| option.editable).count();
-    if changed == 0 {
-        vec!["Ghostty 设置已更新；现有可编辑设置仍可使用。".to_string()]
-    } else {
-        vec![format!(
-            "{changed} 项设置在 Ghostty 更新中发生变化，暂不可编辑；其余 {ready} 项仍可使用。"
-        )]
+    match restriction {
+        None => Vec::new(),
+        Some("platform-unavailable") => vec![format!(
+            "Ghostty 设置可浏览，但 {runtime_platform} 尚未纳入安全写入验证。"
+        )],
+        Some("version-not-supported") => vec![format!(
+            "Ghostty {}{} 可浏览；完成兼容验证前保持只读。",
+            version.unwrap_or("未知版本"),
+            channel
+                .map(|channel| format!(" ({channel})"))
+                .unwrap_or_default()
+        )],
+        Some("setting-changed") => vec![format!(
+            "检测到未经验证的 Ghostty 设置结构（{}…）；完成兼容验证前保持只读。",
+            &schema_hash[..schema_hash.len().min(8)]
+        )],
+        Some(_) => vec!["Ghostty 设置可浏览；当前运行环境保持只读。".to_string()],
     }
 }
 
@@ -410,6 +429,11 @@ fn hex(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
 
+    const AUDITED_FIXTURE: &str =
+        include_str!("../../tests/fixtures/ghostty/1.3.1-macos/show-config-default-docs.txt");
+    const EXPECTED_CONTRACT: &str =
+        include_str!("../../tests/fixtures/ghostty/1.3.1-macos/expected-contract.json");
+
     fn test_catalog(key: &str, fingerprint: &str) -> Catalog {
         let json = format!(
             r#"{{
@@ -519,12 +543,119 @@ mod tests {
     }
 
     #[test]
+    fn committed_ghostty_fixture_proves_the_complete_writable_contract_offline() {
+        let expected: serde_json::Value = serde_json::from_str(EXPECTED_CONTRACT).unwrap();
+        assert_eq!(
+            expected["version"].as_str(),
+            Some(runtime_contract::AUDITED_GHOSTTY_VERSION)
+        );
+        assert_eq!(
+            expected["channel"].as_str(),
+            Some(runtime_contract::AUDITED_GHOSTTY_CHANNEL)
+        );
+        assert_eq!(
+            expected["platform"].as_str(),
+            Some(runtime_contract::AUDITED_PLATFORM)
+        );
+        assert_eq!(
+            expected["schemaHash"].as_str(),
+            Some(runtime_contract::AUDITED_SCHEMA_HASH)
+        );
+        assert_eq!(
+            expected["fixtureBytes"].as_u64(),
+            Some(AUDITED_FIXTURE.len() as u64)
+        );
+        let schema = build(
+            AUDITED_FIXTURE,
+            Some(runtime_contract::AUDITED_GHOSTTY_VERSION.to_string()),
+            Some(runtime_contract::AUDITED_GHOSTTY_CHANNEL.to_string()),
+            runtime_contract::AUDITED_PLATFORM,
+        )
+        .unwrap();
+        assert_eq!(schema.schema_hash, expected["schemaHash"]);
+        assert_eq!(
+            schema.options.len() as u64,
+            expected["observedOptionCount"].as_u64().unwrap()
+        );
+        assert_eq!(
+            runtime_contract::AUDITED_CONTRACT_ID,
+            expected["contractId"].as_str().unwrap()
+        );
+        assert!(schema.diagnostics.is_empty());
+        let expected_scalar_keys = expected["writableScalarKeys"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|key| key.as_str().unwrap())
+            .collect::<Vec<_>>();
+        let expected_special_editors = expected["specialEditors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|key| key.as_str().unwrap())
+            .collect::<Vec<_>>();
+
+        let writable = runtime_contract::writable_options(&schema);
+        let scalar_keys = writable
+            .values()
+            .filter(|option| option.editable)
+            .map(|option| option.key.as_str())
+            .collect::<Vec<_>>();
+        let special_editors = writable
+            .values()
+            .filter(|option| !option.editable)
+            .map(|option| option.key.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(scalar_keys, expected_scalar_keys);
+        assert_eq!(special_editors, expected_special_editors);
+
+        for (version, channel, platform, expected_reason) in [
+            ("1.3.0", "stable", "macos", "version-not-supported"),
+            ("1.3.1", "tip", "macos", "version-not-supported"),
+            ("1.3.1", "stable", "linux", "platform-unavailable"),
+        ] {
+            let read_only = build(
+                AUDITED_FIXTURE,
+                Some(version.to_string()),
+                Some(channel.to_string()),
+                platform,
+            )
+            .unwrap();
+            assert!(runtime_contract::writable_options(&read_only).is_empty());
+            assert!(read_only
+                .options
+                .iter()
+                .filter(|option| expected_scalar_keys.contains(&option.key.as_str()))
+                .all(|option| option.capability.reason.as_deref() == Some(expected_reason)));
+        }
+
+        let changed_document = format!("{AUDITED_FIXTURE}\n");
+        let changed = build(
+            &changed_document,
+            Some("1.3.1".to_string()),
+            Some("stable".to_string()),
+            "macos",
+        )
+        .unwrap();
+        assert!(runtime_contract::writable_options(&changed).is_empty());
+        assert!(changed
+            .options
+            .iter()
+            .filter(|option| expected_scalar_keys.contains(&option.key.as_str()))
+            .all(|option| option.capability.reason.as_deref() == Some("setting-changed")));
+    }
+
+    #[test]
     fn installed_ghostty_schema_is_large_when_binary_is_available() {
-        let Some(executable) = ghostty::locate() else {
+        let Ok(runtime) = ghostty::resolve() else {
             return;
         };
-        let probe = ghostty::probe();
-        let schema = load(&executable, probe.version.clone()).unwrap();
+        let schema = load(
+            &runtime.identity,
+            runtime.version.clone(),
+            runtime.channel.clone(),
+        )
+        .unwrap();
         assert!(
             schema.options.len() >= 150,
             "found only {} options",
@@ -540,8 +671,8 @@ mod tests {
             .options
             .iter()
             .all(|option| { option.editable == (option.capability.edit_mode == "control") }));
-        if probe.version.as_deref() == Some("1.3.1") {
-            assert_eq!(schema.schema_hash, AUDITED_SCHEMA_HASH);
+        if runtime.version.as_deref() == Some("1.3.1") {
+            assert_eq!(schema.schema_hash, runtime_contract::AUDITED_SCHEMA_HASH);
             assert!(schema
                 .options
                 .iter()

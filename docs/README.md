@@ -23,6 +23,7 @@ Ghostty Studio 是本地 Ghostty 配置编辑器。按当前问题选择入口�
 ## Build and extend · 开发与扩展
 
 - [Implementation plan](PLAN.md): technical choices and delivery phases.
+- [Release candidates](RELEASING.md): build evidence, review steps, and signing boundaries.
 - [Extension contract](EXTENSIONS.md): the current data-only extension boundary.
 - [Architecture decisions](adr/): decisions that should not be changed accidentally.
 - [Open-source playbook](OPEN_SOURCE_PLAYBOOK.md): product, community, and growth decisions.

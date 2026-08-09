@@ -2,7 +2,6 @@ fn main() {
     const COMMANDS: &[&str] = &[
         "probe_environment",
         "load_runtime_schema",
-        "inspect_extension_manifest",
         "load_config_graph",
         "list_background_assets",
         "choose_background_images",

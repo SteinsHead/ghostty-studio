@@ -18,8 +18,7 @@ describe("workspace journey model", () => {
     const include = {
       ...root,
       id: "include-background",
-      label: "Include · background.conf",
-      path: "~/.config/ghostty/background.conf",
+      label: "Include · layer 2",
       source: "include" as const,
       priority: 4,
     };
@@ -32,8 +31,7 @@ describe("workspace journey model", () => {
     const include = {
       ...root,
       id: "include-background",
-      label: "Include · background.conf",
-      path: "~/.config/ghostty/background.conf",
+      label: "Include · layer 2",
       source: "include" as const,
       priority: 4,
     };

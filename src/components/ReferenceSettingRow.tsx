@@ -105,13 +105,14 @@ export function ReferenceSettingRow({
   const copy = copyForSetting(locale, option.key, option.description);
   const duplicated = (configured?.occurrenceCount ?? 0) > 1;
   const blockedByWorkspace = readOnly && isGenericallyEditable(option);
-  const editable = isGenericallyEditable(option) && !duplicated && !readOnly;
+  const preservedValue = configured?.valueExposure === "protected";
+  const editable = isGenericallyEditable(option) && !duplicated && !readOnly && !preservedValue;
   const activation = activationLabel(locale, option.capability.activation);
   const detail = copy.detail && copy.detail !== copy.summary ? copy.detail : null;
   const protectedValue = option.capability.reason === "protected";
 
   return (
-    <article className="reference-setting-row">
+    <article id={`setting-${option.key}`} className="reference-setting-row" tabIndex={-1}>
       <div className="reference-setting-row__copy">
         <div className="setting-title">
           <strong className="setting-label">{copy.label}</strong>

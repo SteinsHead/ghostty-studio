@@ -3,7 +3,7 @@ mod error;
 mod models;
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -14,7 +14,7 @@ use std::{
 use domain::{
     background_assets,
     config_document::ConfigDocument,
-    config_graph, discovery, effective_config, extension, ghostty,
+    config_graph, discovery, effective_config, ghostty, runtime_contract,
     safe_write::{self, revision},
     schema,
 };
@@ -23,7 +23,7 @@ use models::{
     ApplyResult, BackgroundAssetImportFailure, BackgroundAssetImportResult, BackgroundAssetPreview,
     BackgroundAssetReference, BackgroundAssetSummary, BackgroundAssetUsage, ChangeEffectPreview,
     ChangePreview, ConfigCandidate, ConfigSession, ConfiguredSetting, DraftChange,
-    EnvironmentReport, RuntimeOption, RuntimeSchema,
+    EnvironmentReport, PublicConfigCandidate, PublicGhosttyInfo, RuntimeOption, RuntimeSchema,
 };
 use tauri::{Manager, State};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
@@ -51,6 +51,8 @@ struct StagedCandidate {
     background_asset_id: Option<String>,
     effect: ChangeEffectPreview,
     dependency_revision: String,
+    review_contract: BTreeMap<String, RuntimeOption>,
+    runtime_identity: ghostty::ExecutableIdentity,
 }
 
 struct PreparedSnapshotRestore {
@@ -59,13 +61,15 @@ struct PreparedSnapshotRestore {
     validation: ghostty::ValidationReport,
     snapshot: safe_write::SnapshotInfo,
     changed_keys: Vec<String>,
+    runtime_identity: ghostty::ExecutableIdentity,
 }
 
 struct CurrentRuntimeContract {
-    executable: PathBuf,
+    executable: ghostty::ExecutableIdentity,
     ghostty_version: Option<String>,
     editable_keys: HashSet<String>,
     editable_options: HashMap<String, RuntimeOption>,
+    writable_options: BTreeMap<String, RuntimeOption>,
     changed_writable_keys: HashSet<String>,
 }
 
@@ -153,102 +157,108 @@ fn probe_environment(state: State<'_, AppState>) -> Result<EnvironmentReport, Co
             .map(|candidate| (candidate.id.clone(), candidate)),
     );
     drop(candidate_store);
+    let runtime = ghostty::resolve().ok();
+    let runtime_creation_eligible = runtime
+        .as_ref()
+        .is_some_and(runtime_allows_automatic_creation);
+    let has_existing_config = candidates.iter().any(|candidate| candidate.exists);
     let visible_candidates = candidates
         .iter()
-        .cloned()
-        .map(|mut candidate| {
-            candidate.path = display_path(Path::new(&candidate.path));
-            candidate
+        .map(|candidate| {
+            let target = Path::new(&candidate.path);
+            let safe_target = creation_root_for(candidate, target)
+                .and_then(|root| safe_write::preflight_new_config(target, &root))
+                .is_ok();
+            let creation_eligible = runtime_creation_eligible
+                && !has_existing_config
+                && !candidate.exists
+                && candidate.writable
+                && !candidate.symlink
+                && safe_target;
+            public_candidate(candidate, creation_eligible)
         })
         .collect();
-
-    let mut visible_ghostty = ghostty::probe();
-    if let Some(executable_path) = visible_ghostty.executable_path.as_mut() {
-        *executable_path = display_path(Path::new(executable_path));
-    }
-    visible_ghostty.raw_version = None;
 
     Ok(EnvironmentReport {
         platform: std::env::consts::OS.to_string(),
         architecture: std::env::consts::ARCH.to_string(),
-        ghostty: visible_ghostty,
+        ghostty: PublicGhosttyInfo {
+            available: runtime.is_some(),
+            version: runtime.as_ref().and_then(|runtime| runtime.version.clone()),
+            channel: runtime.as_ref().and_then(|runtime| runtime.channel.clone()),
+        },
         candidates: visible_candidates,
         warnings,
     })
 }
 
-#[tauri::command]
-fn load_runtime_schema(state: State<'_, AppState>) -> Result<RuntimeSchema, CommandError> {
-    let probe = ghostty::probe();
-    let runtime_schema =
-        if let Some(executable) = probe.executable_path.as_deref().map(PathBuf::from) {
-            schema::load(&executable, probe.version)?
-        } else {
-            RuntimeSchema {
-                ghostty_version: None,
-                schema_hash: "offline".to_string(),
-                options: Vec::new(),
-                diagnostics: vec!["没有找到 Ghostty，设置暂时只读。".to_string()],
-            }
-        };
-    *state
-        .runtime_schema
-        .lock()
-        .map_err(|_| CommandError::new("state_poisoned", "schema state is unavailable"))? =
-        Some(runtime_schema.clone());
-    Ok(runtime_schema)
+fn runtime_allows_automatic_creation(runtime: &ghostty::ResolvedRuntime) -> bool {
+    if runtime.version.as_deref().map(str::trim) != Some(runtime_contract::AUDITED_GHOSTTY_VERSION)
+        || runtime.channel.as_deref().map(str::trim)
+            != Some(runtime_contract::AUDITED_GHOSTTY_CHANNEL)
+        || std::env::consts::OS != runtime_contract::AUDITED_PLATFORM
+    {
+        return false;
+    }
+    schema::load(
+        &runtime.identity,
+        runtime.version.clone(),
+        runtime.channel.clone(),
+    )
+    .is_ok_and(|schema| !runtime_contract::writable_options(&schema).is_empty())
+}
+
+fn public_candidate(candidate: &ConfigCandidate, creation_eligible: bool) -> PublicConfigCandidate {
+    let label = match (candidate.source.as_str(), candidate.format.as_str()) {
+        ("xdg", "ghostty") => "XDG · config.ghostty".to_string(),
+        ("xdg", _) => "XDG · config".to_string(),
+        ("macos", "ghostty") => "macOS · config.ghostty".to_string(),
+        ("macos", _) => "macOS · config".to_string(),
+        ("include", _) => format!(
+            "Include · layer {}",
+            candidate.priority.saturating_sub(3).max(1)
+        ),
+        _ => "Custom configuration".to_string(),
+    };
+    PublicConfigCandidate {
+        id: candidate.id.clone(),
+        label,
+        source: candidate.source.clone(),
+        format: candidate.format.clone(),
+        priority: candidate.priority,
+        exists: candidate.exists,
+        writable: candidate.writable,
+        symlink: candidate.symlink,
+        size_bytes: candidate.size_bytes,
+        creation_eligible,
+    }
 }
 
 #[tauri::command]
-fn inspect_extension_manifest(
-    manifest: String,
-    state: State<'_, AppState>,
-) -> Result<extension::ValidatedExtension, CommandError> {
-    if manifest.len() > 512 * 1024 {
-        return Err(CommandError::new(
-            "extension_too_large",
-            "extension manifest exceeds the 512 KiB limit",
-        ));
-    }
-    let cached_schema = state
-        .runtime_schema
-        .lock()
-        .map_err(|_| CommandError::new("state_poisoned", "schema state is unavailable"))?
-        .clone();
-    let (core_keys, installed_version) = match cached_schema {
-        Some(schema) => (
-            schema
-                .options
-                .iter()
-                .map(|option| option.key.clone())
-                .collect::<HashSet<_>>(),
-            schema.ghostty_version,
-        ),
-        None => {
-            let probe = ghostty::probe();
-            let keys = match probe.executable_path.as_deref().map(PathBuf::from) {
-                Some(executable) => schema::load(&executable, probe.version.clone())?
-                    .options
-                    .into_iter()
-                    .map(|option| option.key)
-                    .collect(),
-                None => HashSet::new(),
-            };
-            (keys, probe.version)
-        }
+fn load_runtime_schema(state: State<'_, AppState>) -> Result<RuntimeSchema, CommandError> {
+    let _mutation_guard = acquire_mutation(&state)?;
+    let runtime_schema = match ghostty::resolve() {
+        Ok(runtime) => schema::load(&runtime.identity, runtime.version, runtime.channel)?,
+        Err(error) if error.code == "ghostty_unavailable" => RuntimeSchema {
+            ghostty_version: None,
+            schema_hash: "offline".to_string(),
+            options: Vec::new(),
+            diagnostics: vec!["没有找到 Ghostty，设置暂时只读。".to_string()],
+        },
+        Err(error) => return Err(error),
     };
-    extension::validate_manifest(
-        manifest.as_bytes(),
-        false,
-        &core_keys,
-        installed_version.as_deref(),
-    )
+    install_runtime_schema(&state, runtime_schema.clone())?;
+    Ok(runtime_schema)
 }
 
 #[tauri::command]
 fn load_config_graph() -> Result<config_graph::ConfigGraph, CommandError> {
     let candidates = discovery::discover_config_candidates();
-    let mut graph = build_config_graph_for(&candidates)?;
+    let graph = build_config_graph_for(&candidates)?;
+    Ok(public_config_graph(graph))
+}
+
+fn public_config_graph(mut graph: config_graph::ConfigGraph) -> config_graph::ConfigGraph {
     let id_map = graph
         .nodes
         .iter()
@@ -299,6 +309,7 @@ fn load_config_graph() -> Result<config_graph::ConfigGraph, CommandError> {
         }
     }
     for diagnostic in &mut graph.diagnostics {
+        diagnostic.message = diagnostic.code.clone();
         if let Some(path) = &mut diagnostic.path {
             *path = path_labels
                 .get(path)
@@ -306,7 +317,7 @@ fn load_config_graph() -> Result<config_graph::ConfigGraph, CommandError> {
                 .unwrap_or_else(|| "未公开路径".to_string());
         }
     }
-    Ok(graph)
+    graph
 }
 
 fn build_config_graph_for(
@@ -794,7 +805,7 @@ fn open_config_session(
     let revision = revision(&bytes);
     let session_id = Uuid::new_v4().to_string();
     let read_only = !candidate.writable || candidate.symlink;
-    let (safe_keys, known_keys, schema_version) = {
+    let (safe_options, known_keys, schema_version) = {
         let schema = state
             .runtime_schema
             .lock()
@@ -812,11 +823,12 @@ fn open_config_session(
             .map(|option| option.key.clone())
             .collect::<HashSet<_>>();
         (
-            editable_keys_from_schema(schema),
+            editable_options_from_schema(schema),
             known_keys,
             schema.ghostty_version.clone(),
         )
     };
+    let safe_keys = safe_options.keys().cloned().collect::<HashSet<_>>();
     let all_values = document.values();
     let background_image = background_assets::state_for_value(
         data_root,
@@ -829,15 +841,21 @@ fn open_config_session(
     let configured_settings = all_values
         .iter()
         .filter(|(key, _)| known_keys.contains(*key))
-        .map(|(key, configured_values)| ConfiguredSetting {
-            key: key.clone(),
-            occurrence_count: configured_values.len(),
-            value_exposure: if key != BACKGROUND_IMAGE_KEY && safe_keys.contains(key) {
-                "available"
-            } else {
-                "protected"
+        .map(|(key, configured_values)| {
+            let value_exposure = safe_options
+                .get(key)
+                .and_then(|option| public_scalar_values(option, configured_values))
+                .is_some();
+            ConfiguredSetting {
+                key: key.clone(),
+                occurrence_count: configured_values.len(),
+                value_exposure: if value_exposure {
+                    "available"
+                } else {
+                    "protected"
+                }
+                .to_string(),
             }
-            .to_string(),
         })
         .collect();
     let unrecognized_setting_count = all_values
@@ -845,17 +863,23 @@ fn open_config_session(
         .filter(|key| !known_keys.contains(*key))
         .count();
     let hidden_value_count = all_values
-        .keys()
-        .filter(|key| {
+        .iter()
+        .filter(|(key, values)| {
             known_keys.contains(*key)
-                && (key.as_str() == BACKGROUND_IMAGE_KEY || !safe_keys.contains(*key))
+                && safe_options
+                    .get(*key)
+                    .and_then(|option| public_scalar_values(option, values))
+                    .is_none()
         })
         .count();
     let values = all_values
         .clone()
         .into_iter()
-        .filter(|(key, _)| {
-            key != BACKGROUND_IMAGE_KEY && safe_keys.contains(key) && known_keys.contains(key)
+        .filter_map(|(key, values)| {
+            let values = safe_options
+                .get(&key)
+                .and_then(|option| public_scalar_values(option, &values))?;
+            Some((key, values))
         })
         .collect();
     let mut configured_effect_keys = safe_keys.iter().cloned().collect::<Vec<_>>();
@@ -890,7 +914,7 @@ fn open_config_session(
                 .collect()
         });
     let (effective_values_known, effective_values, effective_background_image) =
-        read_effective_values(data_root, &safe_keys);
+        read_effective_values(data_root, &safe_options);
     if !effective_values_known {
         for effect in effect_analysis.values_mut() {
             effect.status = "unverified".to_string();
@@ -941,7 +965,6 @@ fn open_config_session(
     Ok(ConfigSession {
         id: session_id,
         candidate_id: candidate_id.to_string(),
-        path: display_path(&path),
         revision,
         read_only,
         values,
@@ -958,7 +981,7 @@ fn open_config_session(
 
 fn read_effective_values(
     data_root: &Path,
-    safe_keys: &HashSet<String>,
+    safe_options: &HashMap<String, RuntimeOption>,
 ) -> (
     bool,
     std::collections::BTreeMap<String, Vec<String>>,
@@ -974,22 +997,22 @@ fn read_effective_values(
             },
         )
     };
-    let Some(executable) = ghostty::locate() else {
+    let Ok(runtime) = ghostty::resolve() else {
         return unavailable();
     };
-    let Ok(validation) = ghostty::validate_default_config(&executable) else {
+    let Ok(validation) = ghostty::validate_default_config(&runtime.identity) else {
         return unavailable();
     };
     if !validation.valid {
         return unavailable();
     }
-    let Ok(output) = ghostty::show_effective_config(&executable) else {
+    let Ok(output) = ghostty::show_effective_config(&runtime.identity) else {
         return unavailable();
     };
     let Ok(document) = ConfigDocument::parse(output.as_bytes()) else {
         return unavailable();
     };
-    let mut all_values = document.values();
+    let all_values = document.values();
     let effective_background_image = background_assets::state_for_value(
         data_root,
         None,
@@ -998,8 +1021,23 @@ fn read_effective_values(
             .and_then(|values| values.last())
             .map(String::as_str),
     );
-    all_values.retain(|key, _| key != BACKGROUND_IMAGE_KEY && safe_keys.contains(key));
-    (true, all_values, effective_background_image)
+    let mut public_values = BTreeMap::new();
+    for (key, values) in all_values {
+        let Some(option) = safe_options.get(&key) else {
+            continue;
+        };
+        if matches!(values.as_slice(), [value] if value.is_empty()) {
+            if option.default_values.iter().any(String::is_empty) {
+                continue;
+            }
+            return unavailable();
+        }
+        let Some(values) = public_scalar_values(option, &values) else {
+            return unavailable();
+        };
+        public_values.insert(key, values);
+    }
+    (true, public_values, effective_background_image)
 }
 
 #[tauri::command]
@@ -1068,8 +1106,10 @@ async fn create_config(
         ));
     }
     let confirmed_contract = current_runtime_contract(&state)?;
+    require_same_runtime_identity(&contract.executable, &confirmed_contract.executable)?;
     require_valid_empty_config(&confirmed_contract.executable)?;
     safe_write::preflight_new_config(&path, &home)?;
+    confirmed_contract.executable.verify()?;
     let outcome = match safe_write::create_new_config(&path, &home) {
         Ok(outcome) => outcome,
         Err(error) => {
@@ -1256,7 +1296,9 @@ fn creation_root_for(candidate: &ConfigCandidate, target: &Path) -> Result<PathB
     Ok(home)
 }
 
-fn require_valid_empty_config(executable: &Path) -> Result<(), CommandError> {
+fn require_valid_empty_config(
+    executable: &ghostty::ExecutableIdentity,
+) -> Result<(), CommandError> {
     let validation = safe_write::validate_empty_config(executable)?;
     if validation.valid {
         Ok(())
@@ -1329,6 +1371,7 @@ fn stage_changes(
             "the change set exceeds the 1 MiB IPC safety limit",
         ));
     }
+    require_unique_draft_keys(&changes)?;
     let session = state
         .sessions
         .lock()
@@ -1448,14 +1491,20 @@ fn stage_changes(
             continue;
         }
 
+        let option = contract.editable_options.get(&change.key).ok_or_else(|| {
+            CommandError::new(
+                "setting_requires_specialized_editor",
+                format!("{} is not available to the scalar editor", change.key),
+            )
+        })?;
+        if !before.is_empty() && public_scalar_values(option, &before).is_none() {
+            return Err(CommandError::new(
+                "existing_setting_value_invalid",
+                "an existing setting cannot be represented safely by its audited editor",
+            ));
+        }
         let next = change.after.first().cloned().unwrap_or_default();
         if !next.is_empty() {
-            let option = contract.editable_options.get(&change.key).ok_or_else(|| {
-                CommandError::new(
-                    "setting_requires_specialized_editor",
-                    format!("{} is not available to the scalar editor", change.key),
-                )
-            })?;
             validate_setting_value(option, &next)?;
         }
         if next.is_empty() {
@@ -1525,8 +1574,25 @@ fn stage_changes(
             "unavailable".to_string(),
         ),
     };
+    let review_contract = runtime_contract::review_contract(
+        &contract.writable_options,
+        trusted_changes.iter().map(|change| change.key.clone()),
+    );
+    if review_contract.len()
+        != trusted_changes
+            .iter()
+            .map(|change| &change.key)
+            .collect::<HashSet<_>>()
+            .len()
+    {
+        return Err(CommandError::new(
+            "ghostty_contract_changed",
+            "the writable Ghostty contract changed while this review was being prepared",
+        ));
+    }
+    let public_changes = public_review_changes(&trusted_changes, &review_contract)?;
     let token = Uuid::new_v4().to_string();
-    let unified_diff = render_setting_diff(&trusted_changes);
+    let unified_diff = render_setting_diff(&public_changes);
     let activation = activation_for_changes(&trusted_changes, &contract.editable_options);
     let staged = StagedCandidate {
         session_id: session_id.clone(),
@@ -1539,6 +1605,8 @@ fn stage_changes(
         background_asset_id,
         effect: effect.clone(),
         dependency_revision,
+        review_contract,
+        runtime_identity: contract.executable.clone(),
     };
     let mut stages = state
         .stages
@@ -1556,7 +1624,7 @@ fn stage_changes(
     Ok(ChangePreview {
         token,
         revision,
-        changes: trusted_changes,
+        changes: public_changes,
         unified_diff,
         diagnostics: validation.diagnostics,
         valid: validation.valid,
@@ -1617,35 +1685,32 @@ async fn apply_changes(
         background_assets::resolve_asset_path(&data_root, asset_id)?;
     }
     let contract = current_runtime_contract(&state)?;
+    require_same_runtime_identity(&stage.runtime_identity, &contract.executable)?;
+    require_review_contract(&stage, &contract)?;
     require_unchanged_review_contract(&stage.changes, &contract.changed_writable_keys)?;
     require_current_change_keys(&stage.changes, &contract.editable_keys)?;
     require_current_effective_plan(&stage, &session, &contract)?;
-    let changed_keys = stage
-        .changes
-        .iter()
-        .map(|change| change.key.as_str())
-        .collect::<Vec<_>>();
+    let public_changes = public_review_changes(&stage.changes, &stage.review_contract)?;
+    let trusted_summary = native_change_summary(&public_changes, locale);
     let trusted_target = display_path(&session.path);
     let (message, confirm_label, cancel_label) = match locale {
         UiLocale::ZhCn => (
             format!(
-                "保存位置：{trusted_target}\n\n将保存 {} 项修改：{}。\n\n保存前会自动创建恢复点。",
+                "保存位置：{trusted_target}\n\n请核对 {} 项修改：\n{trusted_summary}\n\n保存前会自动创建恢复点。",
                 stage.changes.len(),
-                changed_keys.join("、")
             ),
             "保存配置".to_string(),
             "取消".to_string(),
         ),
         UiLocale::En => (
             format!(
-                "Save destination: {trusted_target}\n\nSave {} {}: {}.\n\nA restore point will be created first.",
+                "Save destination: {trusted_target}\n\nReview {} {}:\n{trusted_summary}\n\nA restore point will be created first.",
                 stage.changes.len(),
                 if stage.changes.len() == 1 {
                     "change"
                 } else {
                     "changes"
                 },
-                changed_keys.join(", ")
             ),
             "Save configuration".to_string(),
             "Cancel".to_string(),
@@ -1656,6 +1721,8 @@ async fn apply_changes(
         background_assets::resolve_asset_path(&data_root, asset_id)?;
     }
     let contract = current_runtime_contract(&state)?;
+    require_same_runtime_identity(&stage.runtime_identity, &contract.executable)?;
+    require_review_contract(&stage, &contract)?;
     require_unchanged_review_contract(&stage.changes, &contract.changed_writable_keys)?;
     require_current_change_keys(&stage.changes, &contract.editable_keys)?;
     require_current_effective_plan(&stage, &session, &contract)?;
@@ -1670,7 +1737,17 @@ async fn apply_changes(
             ),
         ));
     }
+    contract.executable.verify()?;
     let outcome = write_for_open_session(&data_root, &state, &session_id, &session, &stage.bytes)?;
+    rollback_if_runtime_changed(
+        &contract.executable,
+        &data_root,
+        &state,
+        &session_id,
+        &session,
+        &session.original_bytes,
+        &outcome.revision,
+    )?;
 
     let final_validation = ghostty::validate_default_config(&contract.executable);
     let validation_failure = match final_validation {
@@ -1740,6 +1817,15 @@ async fn apply_changes(
             &error.message,
         ));
     }
+    rollback_if_runtime_changed(
+        &contract.executable,
+        &data_root,
+        &state,
+        &session_id,
+        &session,
+        &session.original_bytes,
+        &outcome.revision,
+    )?;
 
     let committed_revision =
         refresh_session_after_verified_write(&state, &session_id, &session, &outcome.revision)?;
@@ -1816,24 +1902,27 @@ fn verify_effective_changes(
     let effective = document.values();
     let mut exact = true;
     for change in &stage.changes {
-        let Some(expected) = change.after.last() else {
-            // Removing a value from one layer intentionally inherits another
-            // source or Ghostty's default. The final configuration was read
-            // successfully, but there is no scalar requested value to compare.
-            exact = false;
-            continue;
+        let actual_values = effective.get(&change.key).ok_or_else(|| {
+            CommandError::new(
+                "effective_value_mismatch",
+                "Ghostty did not return the reviewed setting",
+            )
+        })?;
+        let [actual] = actual_values.as_slice() else {
+            return Err(CommandError::new(
+                "effective_value_mismatch",
+                "Ghostty returned an unexpected number of effective values for a reviewed setting",
+            ));
         };
-        let actual = effective
-            .get(&change.key)
-            .and_then(|values| values.last())
-            .ok_or_else(|| {
-                CommandError::new(
-                    "effective_value_mismatch",
-                    "Ghostty did not return the reviewed setting",
-                )
-            })?;
+        let expected = change.after.last();
         let matches = match change.key.as_str() {
-            BACKGROUND_IMAGE_KEY if expected == RESET_BACKGROUND_TOKEN => {
+            BACKGROUND_IMAGE_KEY if expected.is_none() => {
+                exact = false;
+                true
+            }
+            BACKGROUND_IMAGE_KEY
+                if expected.is_some_and(|value| value == RESET_BACKGROUND_TOKEN) =>
+            {
                 unquote_value(actual).is_empty()
             }
             BACKGROUND_IMAGE_KEY => {
@@ -1846,10 +1935,22 @@ fn verify_effective_changes(
                 let expected_path = background_assets::resolve_asset_path(data_root, asset_id)?;
                 equivalent_existing_paths(&expected_path, Path::new(unquote_value(actual)))
             }
-            _ => contract
-                .editable_options
-                .get(&change.key)
-                .is_some_and(|option| scalar_values_match(option, expected, actual)),
+            _ => {
+                let option = contract.editable_options.get(&change.key).ok_or_else(|| {
+                    CommandError::new(
+                        "effective_value_mismatch",
+                        "the reviewed scalar setting is no longer in the audited runtime contract",
+                    )
+                })?;
+                validate_effective_setting_value(option, actual)?;
+                match expected {
+                    Some(expected) => scalar_values_match(option, expected, actual),
+                    None => {
+                        exact = false;
+                        true
+                    }
+                }
+            }
         };
         if !matches {
             return Err(CommandError::new(
@@ -1859,6 +1960,26 @@ fn verify_effective_changes(
         }
     }
     Ok(exact)
+}
+
+fn validate_effective_setting_value(
+    option: &RuntimeOption,
+    value: &str,
+) -> Result<(), CommandError> {
+    let value = unquote_value(value).trim();
+    let default_allows_empty = value.is_empty()
+        && option
+            .default_values
+            .iter()
+            .any(|default| unquote_value(default).trim().is_empty());
+    if default_allows_empty || validate_setting_value(option, value).is_ok() {
+        Ok(())
+    } else {
+        Err(CommandError::new(
+            "effective_value_mismatch",
+            "Ghostty returned an effective value outside the audited editor contract",
+        ))
+    }
 }
 
 fn scalar_values_match(option: &RuntimeOption, expected: &str, actual: &str) -> bool {
@@ -1946,21 +2067,29 @@ async fn restore_snapshot(
         &contract.editable_options,
         &contract.editable_keys,
     )?;
+    let trusted_target = bounded_text(&display_path(&session.path), 240);
+    let snapshot_time = format_utc_timestamp(prepared.snapshot.created_at_ms);
+    let snapshot_short_id = prepared.snapshot.id.chars().take(8).collect::<String>();
+    let changed_keys = native_key_summary(&prepared.changed_keys, locale);
     let (message, confirm_label, cancel_label) = match locale {
         UiLocale::ZhCn => (
-            "恢复所选版本？\n\n当前配置会先备份。".to_string(),
+            format!(
+                "恢复位置：{trusted_target}\n快照：{snapshot_time} · {snapshot_short_id}\n涉及设置：{changed_keys}\n\n当前配置会先备份。"
+            ),
             "恢复配置".to_string(),
             "取消".to_string(),
         ),
         UiLocale::En => (
-            "Restore the selected version?\n\nThe current configuration will be backed up first."
-                .to_string(),
+            format!(
+                "Restore destination: {trusted_target}\nSnapshot: {snapshot_time} · {snapshot_short_id}\nChanged settings: {changed_keys}\n\nThe current configuration will be backed up first."
+            ),
             "Restore configuration".to_string(),
             "Cancel".to_string(),
         ),
     };
     require_native_confirmation(&app, message, confirm_label, cancel_label).await?;
     let contract = current_runtime_contract(&state)?;
+    require_same_runtime_identity(&prepared.runtime_identity, &contract.executable)?;
     enforce_snapshot_restore_policy(
         &prepared,
         &contract.editable_options,
@@ -2026,16 +2155,17 @@ fn restore_snapshot_for_session(
         ));
     }
 
+    let executable = ghostty::ExecutableIdentity::capture(executable)?;
     let prepared = prepare_snapshot_restore(
         data_root,
-        executable,
+        &executable,
         &session,
         expected_revision,
         snapshot_id,
     )?;
     apply_prepared_snapshot_restore(
         data_root,
-        executable,
+        &executable,
         session_id,
         expected_revision,
         prepared,
@@ -2046,7 +2176,7 @@ fn restore_snapshot_for_session(
 
 fn prepare_snapshot_restore(
     data_root: &Path,
-    executable: &Path,
+    executable: &ghostty::ExecutableIdentity,
     session: &OpenSession,
     expected_revision: &str,
     snapshot_id: &str,
@@ -2103,6 +2233,7 @@ fn prepare_snapshot_restore(
         validation,
         snapshot,
         changed_keys,
+        runtime_identity: executable.clone(),
     })
 }
 
@@ -2186,7 +2317,7 @@ fn enforce_snapshot_restore_policy(
 
 fn apply_prepared_snapshot_restore(
     data_root: &Path,
-    executable: &Path,
+    executable: &ghostty::ExecutableIdentity,
     session_id: &str,
     expected_revision: &str,
     prepared: PreparedSnapshotRestore,
@@ -2200,14 +2331,25 @@ fn apply_prepared_snapshot_restore(
             "configuration session changed while the restore was being reviewed",
         ));
     }
+    require_same_runtime_identity(&prepared.runtime_identity, executable)?;
     let restored_snapshot_id = prepared.snapshot.id.clone();
 
+    executable.verify()?;
     let outcome = write_for_open_session(
         data_root,
         state,
         session_id,
         &session,
         &prepared.restored_bytes,
+    )?;
+    rollback_if_runtime_changed(
+        executable,
+        data_root,
+        state,
+        session_id,
+        &session,
+        &prepared.current_bytes,
+        &outcome.revision,
     )?;
 
     let final_validation = ghostty::validate_default_config(executable);
@@ -2235,6 +2377,15 @@ fn apply_prepared_snapshot_restore(
             &failure,
         ));
     }
+    rollback_if_runtime_changed(
+        executable,
+        data_root,
+        state,
+        session_id,
+        &session,
+        &prepared.current_bytes,
+        &outcome.revision,
+    )?;
 
     let restored_revision =
         refresh_session_after_verified_write(state, session_id, &session, &outcome.revision)?;
@@ -2251,6 +2402,30 @@ fn apply_prepared_snapshot_restore(
         activation,
         reload_required: true,
         effective_status: "unverified".to_string(),
+    })
+}
+
+fn rollback_if_runtime_changed(
+    executable: &ghostty::ExecutableIdentity,
+    data_root: &Path,
+    state: &AppState,
+    session_id: &str,
+    session: &OpenSession,
+    original_bytes: &[u8],
+    written_revision: &str,
+) -> Result<(), CommandError> {
+    executable.verify().map_err(|error| {
+        rollback_written_change(
+            data_root,
+            state,
+            session_id,
+            session,
+            original_bytes,
+            written_revision,
+            "ghostty_runtime_changed_after_write",
+            "ghostty_runtime_change_rollback_failed",
+            &error.message,
+        )
     })
 }
 
@@ -2548,57 +2723,50 @@ fn editable_scalar_keys(state: &AppState) -> Result<HashSet<String>, CommandErro
 }
 
 fn current_runtime_contract(state: &AppState) -> Result<CurrentRuntimeContract, CommandError> {
-    let probe = ghostty::probe();
-    let ghostty_version = probe.version.clone();
-    let executable = probe.executable_path.map(PathBuf::from).ok_or_else(|| {
-        CommandError::new(
-            "ghostty_unavailable",
-            "a writable operation requires the installed Ghostty binary",
-        )
-    })?;
-    let fresh_schema = schema::load(&executable, probe.version)?;
-    let editable_options = editable_options_from_schema(&fresh_schema);
-    let (editable_keys, changed_writable_keys) = reconcile_runtime_schema(state, fresh_schema)?;
+    let runtime = ghostty::resolve()?;
+    let ghostty_version = runtime.version.clone();
+    let fresh_schema = schema::load(
+        &runtime.identity,
+        runtime.version.clone(),
+        runtime.channel.clone(),
+    )?;
+    let (writable_options, changed_writable_keys) = install_runtime_schema(state, fresh_schema)?;
+    if writable_options.is_empty() {
+        return Err(CommandError::new(
+            "ghostty_contract_read_only",
+            format!(
+                "the current Ghostty runtime does not match {}",
+                runtime_contract::AUDITED_CONTRACT_ID
+            ),
+        ));
+    }
+    let editable_keys = writable_options.keys().cloned().collect();
+    let editable_options = writable_options
+        .iter()
+        .filter(|(_, option)| option.editable && option.capability.edit_mode == "control")
+        .map(|(key, option)| (key.clone(), option.clone()))
+        .collect();
     Ok(CurrentRuntimeContract {
-        executable,
+        executable: runtime.identity,
         ghostty_version,
         editable_keys,
         editable_options,
+        writable_options,
         changed_writable_keys,
     })
 }
 
-fn reconcile_runtime_schema(
+fn install_runtime_schema(
     state: &AppState,
     fresh_schema: RuntimeSchema,
-) -> Result<(HashSet<String>, HashSet<String>), CommandError> {
-    let fresh_background_image = background_image_editor_supported(&fresh_schema);
-    let mut editable_keys = editable_keys_from_schema(&fresh_schema);
-    if fresh_background_image {
-        editable_keys.insert(BACKGROUND_IMAGE_KEY.to_string());
-    }
+) -> Result<(BTreeMap<String, RuntimeOption>, HashSet<String>), CommandError> {
     let mut cached_schema = state
         .runtime_schema
         .lock()
         .map_err(|_| CommandError::new("state_poisoned", "schema state is unavailable"))?;
-    let cached = cached_schema.as_ref().ok_or_else(|| {
-        CommandError::new(
-            "schema_not_loaded",
-            "the runtime schema must be loaded before a writable operation",
-        )
-    })?;
-    let cached_options = editable_options_from_schema(cached);
-    let fresh_options = editable_options_from_schema(&fresh_schema);
-    let cached_background_image = background_image_editor_supported(cached);
-    let mut changed_writable_keys = cached_options
-        .keys()
-        .chain(fresh_options.keys())
-        .filter(|key| cached_options.get(*key) != fresh_options.get(*key))
-        .cloned()
-        .collect::<HashSet<_>>();
-    if cached_background_image != fresh_background_image {
-        changed_writable_keys.insert(BACKGROUND_IMAGE_KEY.to_string());
-    }
+    let changed_writable_keys =
+        runtime_contract::changed_writable_keys(cached_schema.as_ref(), &fresh_schema);
+    let writable_options = runtime_contract::writable_options(&fresh_schema);
     *cached_schema = Some(fresh_schema);
     drop(cached_schema);
     if !changed_writable_keys.is_empty() {
@@ -2613,25 +2781,7 @@ fn reconcile_runtime_schema(
                     .any(|change| changed_writable_keys.contains(&change.key))
             });
     }
-    if editable_keys.is_empty() {
-        return Err(CommandError::new(
-            "ghostty_contract_read_only",
-            "the current Ghostty version and schema do not match a writable audited contract",
-        ));
-    }
-    Ok((editable_keys, changed_writable_keys))
-}
-
-fn background_image_editor_supported(schema: &RuntimeSchema) -> bool {
-    schema.options.iter().any(|option| {
-        option.key == BACKGROUND_IMAGE_KEY
-            && option.kind == "text"
-            && !option.repeatable
-            && option.risk == "normal"
-            && option.capability.edit_mode == "none"
-            && option.capability.reason.as_deref() == Some("needs-editor")
-            && option.capability.activation == "reload"
-    })
+    Ok((writable_options, changed_writable_keys))
 }
 
 fn require_unchanged_review_contract(
@@ -2650,6 +2800,34 @@ fn require_unchanged_review_contract(
     Ok(())
 }
 
+fn require_review_contract(
+    stage: &StagedCandidate,
+    current: &CurrentRuntimeContract,
+) -> Result<(), CommandError> {
+    if runtime_contract::review_contract_matches(&stage.review_contract, &current.writable_options)
+    {
+        Ok(())
+    } else {
+        Err(CommandError::new(
+            "ghostty_contract_changed",
+            "the Ghostty contract used for this review is no longer current; review the changes again",
+        ))
+    }
+}
+
+fn require_same_runtime_identity(
+    reviewed: &ghostty::ExecutableIdentity,
+    current: &ghostty::ExecutableIdentity,
+) -> Result<(), CommandError> {
+    if reviewed != current {
+        return Err(CommandError::new(
+            "ghostty_runtime_changed",
+            "the installed Ghostty executable changed; review the operation again",
+        ));
+    }
+    current.verify()
+}
+
 fn is_public_setting_key(key: &str) -> bool {
     !key.is_empty()
         && key.len() <= 128
@@ -2658,6 +2836,7 @@ fn is_public_setting_key(key: &str) -> bool {
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
 }
 
+#[cfg(test)]
 fn editable_keys_from_schema(schema: &RuntimeSchema) -> HashSet<String> {
     editable_options_from_schema(schema).into_keys().collect()
 }
@@ -2676,20 +2855,59 @@ fn editable_options_from_schema(schema: &RuntimeSchema) -> HashMap<String, Runti
         .collect()
 }
 
+fn public_scalar_values(option: &RuntimeOption, values: &[String]) -> Option<Vec<String>> {
+    match values {
+        [] => Some(Vec::new()),
+        [value] if !value.is_empty() && validate_setting_value(option, value).is_ok() => {
+            Some(vec![value.clone()])
+        }
+        _ => None,
+    }
+}
+
+fn require_unique_draft_keys(changes: &[DraftChange]) -> Result<(), CommandError> {
+    let mut keys = HashSet::with_capacity(changes.len());
+    if changes
+        .iter()
+        .all(|change| keys.insert(change.key.as_str()))
+    {
+        Ok(())
+    } else {
+        Err(CommandError::new(
+            "duplicate_change_key",
+            "a reviewed change set may contain each setting only once",
+        ))
+    }
+}
+
 fn validate_setting_value(option: &RuntimeOption, value: &str) -> Result<(), CommandError> {
-    if value.chars().any(char::is_control) {
+    if !is_public_setting_key(&option.key)
+        || !option.editable
+        || option.capability.edit_mode != "control"
+        || option.repeatable
+        || option.risk != "normal"
+    {
+        return Err(CommandError::new(
+            "setting_requires_specialized_editor",
+            "this setting is not eligible for the generic scalar editor",
+        ));
+    }
+    if value.is_empty() || value.len() > 128 || value.chars().any(char::is_control) {
         return Err(CommandError::new(
             "invalid_setting_value",
-            format!("{} contains unsupported control characters", option.key),
+            format!("{} has an unsupported scalar value", option.key),
         ));
     }
 
     let numeric_value = match option.kind.as_str() {
-        "boolean" if !matches!(value, "true" | "false") => {
-            return Err(CommandError::new(
-                "invalid_setting_value",
-                format!("{} expects true or false", option.key),
-            ));
+        "boolean" => {
+            if !matches!(value, "true" | "false") {
+                return Err(CommandError::new(
+                    "invalid_setting_value",
+                    format!("{} expects true or false", option.key),
+                ));
+            }
+            None
         }
         "integer" => Some(
             value
@@ -2708,13 +2926,31 @@ fn validate_setting_value(option: &RuntimeOption, value: &str) -> Result<(), Com
                 format!("{} expects a number", option.key),
             )
         })?),
-        "select" if !option.choices.iter().any(|choice| choice == value) => {
+        "select" => {
+            if option.choices.is_empty() || !option.choices.iter().any(|choice| choice == value) {
+                return Err(CommandError::new(
+                    "invalid_setting_value",
+                    format!("{} is not one of the supported choices", option.key),
+                ));
+            }
+            None
+        }
+        "color" => {
+            let color = value.strip_prefix('#').unwrap_or(value);
+            if color.len() != 6 || !color.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return Err(CommandError::new(
+                    "invalid_setting_value",
+                    format!("{} expects a six-digit hexadecimal color", option.key),
+                ));
+            }
+            None
+        }
+        _ => {
             return Err(CommandError::new(
-                "invalid_setting_value",
-                format!("{} is not one of the supported choices", option.key),
+                "setting_requires_specialized_editor",
+                "this setting kind is not supported by the generic scalar editor",
             ));
         }
-        _ => None,
     };
 
     if let Some(number) = numeric_value {
@@ -2884,6 +3120,68 @@ async fn require_native_confirmation(
     }
 }
 
+fn public_review_changes(
+    changes: &[DraftChange],
+    options: &BTreeMap<String, RuntimeOption>,
+) -> Result<Vec<DraftChange>, CommandError> {
+    changes
+        .iter()
+        .map(|change| {
+            let option = options.get(&change.key).ok_or_else(|| {
+                CommandError::new(
+                    "review_projection_failed",
+                    "a reviewed setting is not present in the audited runtime contract",
+                )
+            })?;
+            let (before, after) = if change.key == BACKGROUND_IMAGE_KEY {
+                (
+                    public_background_change_values(&change.before),
+                    public_background_change_values(&change.after),
+                )
+            } else {
+                (
+                    public_scalar_values(option, &change.before),
+                    public_scalar_values(option, &change.after),
+                )
+            };
+            let (Some(before), Some(after)) = (before, after) else {
+                return Err(CommandError::new(
+                    "review_projection_failed",
+                    "a reviewed value cannot cross the application boundary safely",
+                ));
+            };
+            Ok(DraftChange {
+                key: change.key.clone(),
+                before,
+                after,
+            })
+        })
+        .collect()
+}
+
+fn public_background_change_values(values: &[String]) -> Option<Vec<String>> {
+    match values {
+        [] => Some(Vec::new()),
+        [value] if value.is_empty() => Some(Vec::new()),
+        [value] if value == RESET_BACKGROUND_TOKEN || value == EXTERNAL_BACKGROUND_TOKEN => {
+            Some(vec![value.clone()])
+        }
+        [value] => {
+            let asset_id = value.strip_prefix(MANAGED_BACKGROUND_PREFIX)?;
+            if asset_id.len() == 64
+                && asset_id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+            {
+                Some(vec![value.clone()])
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
 fn render_setting_diff(changes: &[DraftChange]) -> String {
     changes
         .iter()
@@ -2907,7 +3205,11 @@ fn render_setting_diff(changes: &[DraftChange]) -> String {
 
 fn public_diff_values(key: &str, values: &[String]) -> String {
     if key != BACKGROUND_IMAGE_KEY {
-        return values.join(", ");
+        return if values.is_empty() {
+            "[not set]".to_string()
+        } else {
+            values.join(", ")
+        };
     }
     match values.last().map(String::as_str) {
         None | Some("") => "[not set]".to_string(),
@@ -2918,6 +3220,138 @@ fn public_diff_values(key: &str, values: &[String]) -> String {
         }
         Some(_) => "[image value hidden]".to_string(),
     }
+}
+
+fn native_change_summary(changes: &[DraftChange], locale: UiLocale) -> String {
+    const MAX_CHANGES: usize = 10;
+    const MAX_FIELD_CHARS: usize = 48;
+    let mut rows = changes
+        .iter()
+        .take(MAX_CHANGES)
+        .map(|change| {
+            let key = bounded_text(&change.key, MAX_FIELD_CHARS);
+            let before = bounded_text(
+                &native_change_value(&change.key, &change.before, locale),
+                MAX_FIELD_CHARS,
+            );
+            let after = bounded_text(
+                &native_change_value(&change.key, &change.after, locale),
+                MAX_FIELD_CHARS,
+            );
+            format!("• {key}: {before} → {after}")
+        })
+        .collect::<Vec<_>>();
+    if changes.len() > MAX_CHANGES {
+        rows.push(match locale {
+            UiLocale::ZhCn => format!("… 另有 {} 项", changes.len() - MAX_CHANGES),
+            UiLocale::En => format!("… and {} more", changes.len() - MAX_CHANGES),
+        });
+    }
+    rows.join("\n")
+}
+
+fn native_change_value(key: &str, values: &[String], locale: UiLocale) -> String {
+    if key != BACKGROUND_IMAGE_KEY {
+        return if values.is_empty() {
+            match locale {
+                UiLocale::ZhCn => "未设置".to_string(),
+                UiLocale::En => "Not set".to_string(),
+            }
+        } else {
+            values.join(", ")
+        };
+    }
+    match values.last().map(String::as_str) {
+        None | Some("") => match locale {
+            UiLocale::ZhCn => "未设置".to_string(),
+            UiLocale::En => "Not set".to_string(),
+        },
+        Some(RESET_BACKGROUND_TOKEN) => match locale {
+            UiLocale::ZhCn => "恢复默认".to_string(),
+            UiLocale::En => "Reset to default".to_string(),
+        },
+        Some(EXTERNAL_BACKGROUND_TOKEN) => match locale {
+            UiLocale::ZhCn => "外部图片（路径已隐藏）".to_string(),
+            UiLocale::En => "External image (path hidden)".to_string(),
+        },
+        Some(value) if value.starts_with(MANAGED_BACKGROUND_PREFIX) => match locale {
+            UiLocale::ZhCn => "图片库图片".to_string(),
+            UiLocale::En => "Managed image".to_string(),
+        },
+        Some(_) => match locale {
+            UiLocale::ZhCn => "图片值已隐藏".to_string(),
+            UiLocale::En => "Image value hidden".to_string(),
+        },
+    }
+}
+
+fn bounded_text(value: &str, maximum_chars: usize) -> String {
+    let mut characters = value.chars();
+    let prefix = characters.by_ref().take(maximum_chars).collect::<String>();
+    if characters.next().is_some() {
+        format!("{prefix}…")
+    } else {
+        prefix
+    }
+}
+
+fn native_key_summary(keys: &[String], locale: UiLocale) -> String {
+    const MAX_KEYS: usize = 10;
+    let mut visible = keys
+        .iter()
+        .take(MAX_KEYS)
+        .map(|key| bounded_text(key, 48))
+        .collect::<Vec<_>>();
+    if keys.len() > MAX_KEYS {
+        visible.push(match locale {
+            UiLocale::ZhCn => format!("另有 {} 项", keys.len() - MAX_KEYS),
+            UiLocale::En => format!("{} more", keys.len() - MAX_KEYS),
+        });
+    }
+    if visible.is_empty() {
+        match locale {
+            UiLocale::ZhCn => "无".to_string(),
+            UiLocale::En => "None".to_string(),
+        }
+    } else {
+        visible.join(match locale {
+            UiLocale::ZhCn => "、",
+            UiLocale::En => ", ",
+        })
+    }
+}
+
+fn format_utc_timestamp(milliseconds: u64) -> String {
+    const MAX_SUPPORTED_SECONDS: u64 = 253_402_300_799;
+    let seconds = milliseconds / 1_000;
+    if seconds > MAX_SUPPORTED_SECONDS {
+        return "timestamp unavailable".to_string();
+    }
+    let days = (seconds / 86_400) as i64;
+    let seconds_of_day = seconds % 86_400;
+    let hour = seconds_of_day / 3_600;
+    let minute = (seconds_of_day % 3_600) / 60;
+    let (year, month, day) = civil_date_from_unix_days(days);
+    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02} UTC")
+}
+
+fn civil_date_from_unix_days(days: i64) -> (i64, i64, i64) {
+    let shifted = days + 719_468;
+    let era = if shifted >= 0 {
+        shifted
+    } else {
+        shifted - 146_096
+    } / 146_097;
+    let day_of_era = shifted - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let mut year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_position = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_position + 2) / 5 + 1;
+    let month = month_position + if month_position < 10 { 3 } else { -9 };
+    year += i64::from(month <= 2);
+    (year, month, day)
 }
 
 fn public_background_values(state: models::BackgroundImageState) -> Vec<String> {
@@ -2956,7 +3390,6 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             probe_environment,
             load_runtime_schema,
-            inspect_extension_manifest,
             load_config_graph,
             list_background_assets,
             choose_background_images,
@@ -2987,6 +3420,19 @@ fn allowed_navigation(url: &tauri::Url) -> bool {
 mod tests {
     use super::*;
     use std::fs;
+
+    fn test_executable_identity() -> ghostty::ExecutableIdentity {
+        static IDENTITY: std::sync::OnceLock<ghostty::ExecutableIdentity> =
+            std::sync::OnceLock::new();
+        IDENTITY
+            .get_or_init(|| {
+                ghostty::ExecutableIdentity::capture(
+                    &std::env::current_exe().expect("test executable path"),
+                )
+                .expect("test executable identity")
+            })
+            .clone()
+    }
 
     #[test]
     fn native_dialog_locale_is_a_closed_enum() {
@@ -3130,6 +3576,27 @@ mod tests {
         assert!(acquire_mutation(&state).is_ok());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn reviewed_runtime_identity_rejects_a_different_executable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let reviewed = test_executable_identity();
+        assert!(require_same_runtime_identity(&reviewed, &reviewed).is_ok());
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("other-ghostty");
+        fs::write(&path, b"#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+        let current = ghostty::ExecutableIdentity::capture(&path).unwrap();
+        assert_eq!(
+            require_same_runtime_identity(&reviewed, &current)
+                .unwrap_err()
+                .code,
+            "ghostty_runtime_changed"
+        );
+    }
+
     #[test]
     fn creation_requires_exactly_one_matching_default_layer_after_commit() {
         fn candidate(id: &str, path: &str, exists: bool) -> ConfigCandidate {
@@ -3184,6 +3651,76 @@ mod tests {
     }
 
     #[test]
+    fn renderer_candidate_projection_never_contains_local_paths() {
+        let internal = ConfigCandidate {
+            id: "opaque-id".to_string(),
+            label: "Include · private-alice.conf".to_string(),
+            path: "/Users/alice/secret/private-alice.conf".to_string(),
+            source: "include".to_string(),
+            format: "legacy".to_string(),
+            priority: 7,
+            exists: true,
+            writable: true,
+            symlink: false,
+            size_bytes: Some(42),
+        };
+        let serialized = serde_json::to_string(&public_candidate(&internal, false)).unwrap();
+        assert!(!serialized.contains("/Users"));
+        assert!(!serialized.contains("alice"));
+        assert!(!serialized.contains("private-alice"));
+        assert!(serialized.contains("Include · layer 4"));
+        assert!(serialized.contains("\"creationEligible\":false"));
+    }
+
+    #[test]
+    fn renderer_graph_projection_replaces_paths_and_raw_diagnostics() {
+        let private_path = "/Users/alice/secret/private.conf";
+        let graph = config_graph::ConfigGraph {
+            graph_revision: "revision".to_string(),
+            complete: false,
+            semantics_known: false,
+            nodes: vec![config_graph::ConfigNode {
+                id: "node-private".to_string(),
+                path: private_path.to_string(),
+                load_index: 0,
+                depth: 0,
+                assignment_count: 1,
+                symlink: false,
+                content_revision: "private-revision".to_string(),
+            }],
+            edges: vec![config_graph::ConfigEdge {
+                from_id: "node-private".to_string(),
+                to_id: None,
+                declared_path: private_path.to_string(),
+                line: 2,
+                optional: false,
+                status: "missing".to_string(),
+            }],
+            provenance: vec![config_graph::ProvenanceEntry {
+                key: "font-size".to_string(),
+                source_id: "node-private".to_string(),
+                source_path: private_path.to_string(),
+                line: 1,
+                load_index: 0,
+            }],
+            diagnostics: vec![config_graph::GraphDiagnostic {
+                code: "config_read_failed".to_string(),
+                message: format!("failed to read {private_path}"),
+                path: Some(private_path.to_string()),
+                line: None,
+            }],
+            total_bytes: 0,
+        };
+
+        let serialized = serde_json::to_string(&public_config_graph(graph)).unwrap();
+        assert!(!serialized.contains("/Users"));
+        assert!(!serialized.contains("alice"));
+        assert!(!serialized.contains("private.conf"));
+        assert!(serialized.contains("配置层 1"));
+        assert!(serialized.contains("未公开的 include 路径"));
+    }
+
+    #[test]
     fn runtime_contract_change_invalidates_reviews_fail_closed() {
         let state = AppState::default();
         let original = test_runtime_option("font-size");
@@ -3198,7 +3735,7 @@ mod tests {
         let mut changed = original;
         changed.capability.max = Some(300.0);
 
-        let (editable, changed_keys) = reconcile_runtime_schema(
+        let (editable, changed_keys) = install_runtime_schema(
             &state,
             RuntimeSchema {
                 ghostty_version: Some("1.3.2".to_string()),
@@ -3209,7 +3746,7 @@ mod tests {
         )
         .unwrap();
 
-        assert!(editable.contains("font-size"));
+        assert!(editable.contains_key("font-size"));
         assert!(changed_keys.contains("font-size"));
         assert_eq!(
             require_unchanged_review_contract(
@@ -3253,7 +3790,7 @@ mod tests {
         let mut changed_background = background;
         changed_background.capability.max = Some(0.9);
 
-        let (keys, changed_keys) = reconcile_runtime_schema(
+        let (keys, changed_keys) = install_runtime_schema(
             &state,
             RuntimeSchema {
                 ghostty_version: Some("1.3.2".to_string()),
@@ -3264,7 +3801,7 @@ mod tests {
         )
         .unwrap();
 
-        assert!(keys.contains("font-size"));
+        assert!(keys.contains_key("font-size"));
         assert!(changed_keys.contains("background-opacity"));
         assert!(!changed_keys.contains("font-size"));
         assert_eq!(state.stages.lock().unwrap().len(), 1);
@@ -3338,7 +3875,7 @@ mod tests {
         let target = directory.path().join("config");
         fs::write(
             &target,
-            b"font-size = 14\nbackground-image = /Users/private/wallpaper.png\n/Users/private/token = should-not-cross-ipc\n",
+            b"font-size = 14\nbackground = /Users/private/secret-color\nbackground-image = /Users/private/wallpaper.png\n/Users/private/token = should-not-cross-ipc\n",
         )
         .unwrap();
 
@@ -3349,6 +3886,13 @@ mod tests {
             diagnostics: Vec::new(),
             options: vec![
                 test_runtime_option("font-size"),
+                {
+                    let mut option = test_runtime_option("background");
+                    option.kind = "color".to_string();
+                    option.capability.min = None;
+                    option.capability.max = None;
+                    option
+                },
                 models::RuntimeOption {
                     key: BACKGROUND_IMAGE_KEY.to_string(),
                     description: String::new(),
@@ -3384,7 +3928,7 @@ mod tests {
 
         let session = open_config_session("candidate", directory.path(), &state).unwrap();
         assert_eq!(session.unrecognized_setting_count, 1);
-        assert_eq!(session.configured_settings.len(), 2);
+        assert_eq!(session.configured_settings.len(), 3);
         assert!(session
             .configured_settings
             .iter()
@@ -3392,11 +3936,16 @@ mod tests {
         assert!(session.configured_settings.iter().any(|setting| {
             setting.key == BACKGROUND_IMAGE_KEY && setting.value_exposure == "protected"
         }));
+        assert!(session.configured_settings.iter().any(|setting| {
+            setting.key == "background" && setting.value_exposure == "protected"
+        }));
+        assert!(!session.values.contains_key("background"));
         assert!(!session.values.contains_key(BACKGROUND_IMAGE_KEY));
         let serialized = serde_json::to_string(&session).unwrap();
         assert!(!serialized.contains("/Users/private/token"));
         assert!(!serialized.contains("should-not-cross-ipc"));
         assert!(!serialized.contains("/Users/private/wallpaper.png"));
+        assert!(!serialized.contains("/Users/private/secret-color"));
     }
 
     #[test]
@@ -3431,6 +3980,121 @@ mod tests {
         assert_eq!(
             validate_setting_value(&select, "beam").unwrap_err().code,
             "invalid_setting_value"
+        );
+
+        let mut color = test_runtime_option("background");
+        color.kind = "color".to_string();
+        color.capability.min = None;
+        color.capability.max = None;
+        assert!(validate_setting_value(&color, "#aB12f0").is_ok());
+        assert!(validate_setting_value(&color, "aB12f0").is_ok());
+        assert_eq!(
+            validate_setting_value(&color, "/Users/private/color")
+                .unwrap_err()
+                .code,
+            "invalid_setting_value"
+        );
+        assert_eq!(
+            validate_effective_setting_value(&color, "/Users/private/color")
+                .unwrap_err()
+                .code,
+            "effective_value_mismatch"
+        );
+        color.default_values = vec![String::new()];
+        assert!(validate_effective_setting_value(&color, "").is_ok());
+
+        let mut integer = test_runtime_option("font-thicken-strength");
+        integer.kind = "integer".to_string();
+        assert!(validate_setting_value(&integer, "12").is_ok());
+        assert_eq!(
+            validate_setting_value(&integer, "12.5").unwrap_err().code,
+            "invalid_setting_value"
+        );
+
+        let mut text = test_runtime_option("font-family");
+        text.kind = "text".to_string();
+        assert_eq!(
+            validate_setting_value(&text, "secret").unwrap_err().code,
+            "setting_requires_specialized_editor"
+        );
+    }
+
+    #[test]
+    fn public_review_projection_rejects_values_outside_the_audited_editor_contract() {
+        let option = test_runtime_option("font-size");
+        let options = BTreeMap::from([(option.key.clone(), option)]);
+        let secret = "/Users/private/token";
+        let error = public_review_changes(
+            &[DraftChange {
+                key: "font-size".to_string(),
+                before: vec![secret.to_string()],
+                after: vec!["14".to_string()],
+            }],
+            &options,
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "review_projection_failed");
+        assert!(!error.message.contains(secret));
+
+        let projected = public_review_changes(
+            &[DraftChange {
+                key: "font-size".to_string(),
+                before: vec!["13".to_string()],
+                after: vec!["14".to_string()],
+            }],
+            &options,
+        )
+        .unwrap();
+        assert_eq!(projected[0].before, ["13"]);
+        assert_eq!(projected[0].after, ["14"]);
+    }
+
+    #[test]
+    fn duplicate_draft_keys_are_rejected_before_background_identity_is_selected() {
+        let changes = vec![
+            DraftChange {
+                key: BACKGROUND_IMAGE_KEY.to_string(),
+                before: Vec::new(),
+                after: vec![RESET_BACKGROUND_TOKEN.to_string()],
+            },
+            DraftChange {
+                key: BACKGROUND_IMAGE_KEY.to_string(),
+                before: vec![RESET_BACKGROUND_TOKEN.to_string()],
+                after: Vec::new(),
+            },
+        ];
+        assert_eq!(
+            require_unique_draft_keys(&changes).unwrap_err().code,
+            "duplicate_change_key"
+        );
+    }
+
+    #[test]
+    fn native_review_summaries_are_bounded_and_hide_managed_image_identity() {
+        let asset_id = "a".repeat(64);
+        let mut changes = vec![DraftChange {
+            key: BACKGROUND_IMAGE_KEY.to_string(),
+            before: vec![EXTERNAL_BACKGROUND_TOKEN.to_string()],
+            after: vec![format!("{MANAGED_BACKGROUND_PREFIX}{asset_id}")],
+        }];
+        changes.extend((0..10).map(|index| DraftChange {
+            key: format!("setting-{index}"),
+            before: vec!["1".to_string()],
+            after: vec!["2".to_string()],
+        }));
+        let summary = native_change_summary(&changes, UiLocale::En);
+        assert!(summary.contains("External image (path hidden) → Managed image"));
+        assert!(summary.contains("… and 1 more"));
+        assert!(!summary.contains(&asset_id));
+        assert!(!summary.contains(MANAGED_BACKGROUND_PREFIX));
+    }
+
+    #[test]
+    fn snapshot_confirmation_time_is_stable_utc() {
+        assert_eq!(format_utc_timestamp(0), "1970-01-01 00:00 UTC");
+        assert_eq!(
+            format_utc_timestamp(1_700_000_000_000),
+            "2023-11-14 22:13 UTC"
         );
     }
 
@@ -3499,6 +4163,7 @@ mod tests {
                 size_bytes: 15,
             },
             changed_keys,
+            runtime_identity: test_executable_identity(),
         };
 
         let options =
@@ -3584,6 +4249,7 @@ mod tests {
                 size_bytes: 52,
             },
             changed_keys: vec![BACKGROUND_IMAGE_KEY.to_string()],
+            runtime_identity: test_executable_identity(),
         };
         let editable_keys = HashSet::from([BACKGROUND_IMAGE_KEY.to_string()]);
         assert!(
@@ -3605,6 +4271,45 @@ mod tests {
             },
         );
         session_id
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn runtime_identity_change_after_write_rolls_back_reviewed_bytes() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("config");
+        let data_root = directory.path().join("studio-data");
+        let original = b"font-size = 14\n";
+        let candidate = b"font-size = 15\n";
+        fs::write(&target, original).unwrap();
+
+        let executable = directory.path().join("ghostty");
+        fs::write(&executable, b"#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+        let identity = ghostty::ExecutableIdentity::capture(&executable).unwrap();
+
+        let state = AppState::default();
+        let session_id = insert_writable_session(&state, &target, original);
+        let session = open_session(&state, &session_id).unwrap();
+        let outcome =
+            safe_write::write_atomically(&target, candidate, &session.revision, &data_root)
+                .unwrap();
+        fs::write(&executable, b"#!/bin/sh\nexit 1\n").unwrap();
+
+        let error = rollback_if_runtime_changed(
+            &identity,
+            &data_root,
+            &state,
+            &session_id,
+            &session,
+            original,
+            &outcome.revision,
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "ghostty_runtime_changed_after_write");
+        assert_eq!(fs::read(&target).unwrap(), original);
     }
 
     fn insert_stage(state: &AppState, session_id: &str, revision: &str) {
@@ -3630,6 +4335,11 @@ mod tests {
                     suggested_label: None,
                 },
                 dependency_revision: "test".to_string(),
+                review_contract: BTreeMap::from([(
+                    "font-size".to_string(),
+                    test_runtime_option("font-size"),
+                )]),
+                runtime_identity: test_executable_identity(),
             },
         );
     }
@@ -3659,6 +4369,8 @@ mod tests {
                     suggested_label: None,
                 },
                 dependency_revision: "test".to_string(),
+                review_contract: BTreeMap::new(),
+                runtime_identity: test_executable_identity(),
             },
         );
 
@@ -3840,7 +4552,7 @@ mod tests {
 
         let error = restore_snapshot_for_session(
             &data_root,
-            Path::new("validator-is-not-reached"),
+            test_executable_identity().path(),
             &first_session,
             &safe_write::revision(first_current),
             &second_write.snapshot_id,

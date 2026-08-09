@@ -61,7 +61,7 @@ pub fn revision(bytes: &[u8]) -> String {
 }
 
 pub fn validate_candidate(
-    executable: &Path,
+    executable: &ghostty::ExecutableIdentity,
     target: &Path,
     bytes: &[u8],
 ) -> Result<ValidationReport, CommandError> {
@@ -79,7 +79,9 @@ pub fn validate_candidate(
     ghostty::validate_config(executable, temporary.path())
 }
 
-pub fn validate_empty_config(executable: &Path) -> Result<ValidationReport, CommandError> {
+pub fn validate_empty_config(
+    executable: &ghostty::ExecutableIdentity,
+) -> Result<ValidationReport, CommandError> {
     let temporary = NamedTempFile::new()?;
     set_private_permissions(temporary.path())?;
     temporary.as_file().sync_all()?;
@@ -991,9 +993,10 @@ mod tests {
         let root = directory.path().join("home");
         fs::create_dir(&root).unwrap();
         let executable = validator(directory.path(), true);
+        let identity = ghostty::ExecutableIdentity::capture(&executable).unwrap();
         let target = root.join(".config/ghostty/config");
 
-        assert!(validate_empty_config(&executable).unwrap().valid);
+        assert!(validate_empty_config(&identity).unwrap().valid);
         let outcome = create_new_config(&target, &root).unwrap();
         assert_eq!(outcome.revision, revision(b""));
         assert_eq!(fs::read(&target).unwrap(), b"");
@@ -1075,9 +1078,10 @@ mod tests {
         let root = directory.path().join("home");
         fs::create_dir(&root).unwrap();
         let executable = validator(directory.path(), false);
+        let identity = ghostty::ExecutableIdentity::capture(&executable).unwrap();
         let target = root.join(".config/ghostty/config");
 
-        let validation = validate_empty_config(&executable).unwrap();
+        let validation = validate_empty_config(&identity).unwrap();
         assert!(!validation.valid);
         assert!(!target.exists());
     }

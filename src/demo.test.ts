@@ -12,6 +12,10 @@ describe("browser demo fixture", () => {
 
   it("cannot accidentally become a writable local-file backend", () => {
     expect(demoEnvironment.candidates.length).toBeGreaterThan(0);
-    expect(demoEnvironment.candidates.every((candidate) => candidate.path.startsWith("~"))).toBe(true);
+    expect(demoEnvironment.candidates.every((candidate) => !candidate.creationEligible)).toBe(true);
+    expect(demoEnvironment.candidates.every((candidate) => !("path" in candidate))).toBe(true);
+    expect("executablePath" in demoEnvironment.ghostty).toBe(false);
+    expect("rawVersion" in demoEnvironment.ghostty).toBe(false);
+    expect(JSON.stringify(demoEnvironment)).not.toContain("/Users/");
   });
 });

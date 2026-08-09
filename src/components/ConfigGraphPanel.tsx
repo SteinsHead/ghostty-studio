@@ -6,6 +6,7 @@ import {
   Layers3,
   Link2,
   LockKeyhole,
+  RefreshCw,
   X,
 } from "lucide-react";
 import { useI18n, type AppLocale } from "../i18n";
@@ -14,7 +15,10 @@ import { useDialogFocus } from "./useDialogFocus";
 
 interface ConfigGraphPanelProps {
   graph: ConfigGraph | null;
+  loading?: boolean;
+  error?: string | null;
   onClose(): void;
+  onRetry?(): void;
 }
 
 const edgeStatusLabels: Record<string, Record<AppLocale, string>> = {
@@ -53,7 +57,13 @@ function graphDiagnosticMessage(locale: AppLocale, code: string): string {
   return chinese ? "部分配置来源无法读取。" : "Part of the configuration could not be read.";
 }
 
-export function ConfigGraphPanel({ graph, onClose }: ConfigGraphPanelProps) {
+export function ConfigGraphPanel({
+  graph,
+  loading = false,
+  error = null,
+  onClose,
+  onRetry,
+}: ConfigGraphPanelProps) {
   const { locale, text } = useI18n();
   const dialogRef = useDialogFocus(onClose);
   const numberFormatter = new Intl.NumberFormat(locale);
@@ -75,6 +85,7 @@ export function ConfigGraphPanel({ graph, onClose }: ConfigGraphPanelProps) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="graph-title"
+        aria-busy={loading}
         tabIndex={-1}
         onMouseDown={(event) => event.stopPropagation()}
       >
@@ -93,8 +104,22 @@ export function ConfigGraphPanel({ graph, onClose }: ConfigGraphPanelProps) {
         </header>
 
         <div className="review-body" tabIndex={0} aria-label={text("配置来源详情", "Configuration source details")}>
-          {!graph ? (
-            <div className="loading-card">{text("尚未加载配置来源。", "Configuration sources have not been loaded yet.")}</div>
+          {loading ? (
+            <div className="loading-card" role="status" aria-live="polite">
+              {text("正在重新读取配置来源…", "Reloading configuration sources…")}
+            </div>
+          ) : error ? (
+            <div className="graph-error" role="alert">
+              <AlertTriangle size={16} />
+              <span>{error}</span>
+              {onRetry && (
+                <button type="button" onClick={onRetry}>
+                  <RefreshCw size={13} /> {text("重试", "Try again")}
+                </button>
+              )}
+            </div>
+          ) : !graph ? (
+            <div className="graph-empty">{text("没有可显示的配置来源。", "No configuration sources are available.")}</div>
           ) : (
             <>
               <div className="graph-metrics">

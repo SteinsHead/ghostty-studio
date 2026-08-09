@@ -16,13 +16,6 @@ for required_tool in pnpm node cargo codesign hdiutil ditto lipo shasum awk grep
   fi
 done
 
-build_user_home="${HOME:?HOME must be set for release path remapping}"
-release_rustflags="${RUSTFLAGS:-}"
-if [[ -n "$release_rustflags" ]]; then
-  release_rustflags+=" "
-fi
-release_rustflags+="--remap-path-prefix=$build_user_home=/build/home"
-
 tauri_version="$(
   node --input-type=commonjs -p \
     "JSON.parse(require('node:fs').readFileSync('src-tauri/tauri.conf.json', 'utf8')).version"
@@ -38,16 +31,11 @@ if [[ -z "$tauri_version" || "$tauri_version" != "$package_version" ||
   exit 1
 fi
 
-RUSTFLAGS="$release_rustflags" pnpm tauri build --bundles app --no-sign --ci -- --locked
+bash scripts/build-macos-app.sh
 
 app_path="$project_root/src-tauri/target/release/bundle/macos/Ghostty Studio.app"
 if [[ ! -d "$app_path" ]]; then
   echo "expected app bundle was not produced: $app_path" >&2
-  exit 1
-fi
-
-if grep -R -a -l -F -- "$build_user_home/" "$app_path" >/dev/null 2>&1; then
-  echo "release bundle contains the local build home path" >&2
   exit 1
 fi
 

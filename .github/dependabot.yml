@@ -7,8 +7,20 @@ updates:
       day: monday
       time: "09:00"
       timezone: Asia/Shanghai
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 4
     rebase-strategy: auto
+    labels:
+      - dependencies
+    commit-message:
+      prefix: deps
+    groups:
+      npm-minor-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
 
   - package-ecosystem: cargo
     directory: /src-tauri
@@ -17,8 +29,20 @@ updates:
       day: monday
       time: "09:20"
       timezone: Asia/Shanghai
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 4
     rebase-strategy: auto
+    labels:
+      - dependencies
+    commit-message:
+      prefix: "deps(rust)"
+    groups:
+      cargo-minor-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
 
   - package-ecosystem: github-actions
     directory: /
@@ -27,5 +51,17 @@ updates:
       day: monday
       time: "09:40"
       timezone: Asia/Shanghai
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 3
     rebase-strategy: auto
+    labels:
+      - dependencies
+    commit-message:
+      prefix: ci
+    groups:
+      actions-minor-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch

@@ -119,12 +119,6 @@ impl Catalog {
     pub fn option_count(&self) -> usize {
         self.options.len()
     }
-
-    pub fn supports_version(&self, installed_version: Option<&str>) -> bool {
-        installed_version
-            .and_then(|version| Version::parse(version).ok())
-            .is_some_and(|version| self.ghostty.matches(&version))
-    }
 }
 
 fn validate_catalog(file: &CatalogFile) -> Result<(), CommandError> {

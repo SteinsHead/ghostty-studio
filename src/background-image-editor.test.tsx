@@ -138,6 +138,7 @@ describe("background image editor", () => {
 
     expect(container.querySelector<HTMLInputElement>('.background-control input[type="number"]')?.value).toBe("150");
     expect(container.querySelector<HTMLInputElement>('.background-control input[type="range"]')?.value).toBe("1.5");
+    expect(container.querySelector<HTMLInputElement>('.background-control input[type="range"]')?.getAttribute("aria-valuetext")).toBe("150%");
     expect(container.querySelectorAll('.position-grid [role="radio"]')).toHaveLength(9);
     expect(container.querySelectorAll('.background-asset[role="radio"]')).toHaveLength(2);
     expect(container.textContent).not.toContain("/Users/");
