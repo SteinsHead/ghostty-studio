@@ -29,7 +29,7 @@ the behavior. Do not attach a complete config.
 
 ## Set up the project
 
-You need macOS 11 or later, Ghostty, Xcode Command Line Tools, Node 22.11, pnpm 10, and the pinned
+You need macOS 11 or later, Ghostty, Xcode Command Line Tools, Node 22.12.0, pnpm 10, and the pinned
 Rust toolchain.
 
 ```bash
