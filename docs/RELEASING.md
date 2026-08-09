@@ -5,7 +5,8 @@ Release.
 
 ## What the workflow proves
 
-- The requested source ref resolves to a clean commit.
+- The protected `main` branch resolves to a clean, reviewed commit. Arbitrary refs are never checked
+  out by this privileged packaging path.
 - `package.json`, `Cargo.toml`, and `tauri.conf.json` contain the requested version.
 - Locked frontend and Rust checks pass before packaging.
 - Every third-party workflow action is pinned to an immutable commit; Dependabot proposes reviewed
@@ -31,11 +32,12 @@ artifact for 14 days; it cannot upload release assets.
 
 ## Create and review a candidate
 
-1. Update the version in all three manifests and push the commit or tag to review.
-2. Run **Actions → Release candidate → Run workflow** with the exact ref and version.
+1. Update the version in all three manifests, review it through a pull request, and merge it into the
+   protected `main` branch.
+2. Run **Actions → Release candidate → Run workflow** from `main` with the exact version.
 3. Download the artifact and verify `SHA256SUMS.txt` with `shasum -a 256 -c SHA256SUMS.txt`.
-4. Compare `BUILD-MANIFEST.txt` with the requested ref, inspect the app on an Apple Silicon Mac, and
-   repeat the privacy checklist in [Launch kit](LAUNCH_KIT.md).
+4. Compare `BUILD-MANIFEST.txt` with the reviewed `main` commit and inspect the app on an Apple
+   Silicon Mac. Then repeat the privacy checklist in [Launch kit](LAUNCH_KIT.md).
 5. Create a draft GitHub Release, attach the reviewed DMG, checksum, build manifest, release notes,
    compatibility statement, and known limits, then verify the complete draft.
 6. Publish the draft only when every asset is final. The repository enforces immutable releases, so

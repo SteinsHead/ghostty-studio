@@ -74,16 +74,24 @@ impl SupportedFormat {
 }
 
 pub fn list(data_root: &Path) -> Result<Vec<BackgroundAssetSummary>, CommandError> {
-    let root = ensure_root(data_root)?;
+    ensure_root(data_root)?;
+    let root = library_root(data_root);
     let metadata_dir = root.join("metadata");
     let mut assets = Vec::new();
     let entries = fs::read_dir(&metadata_dir)?;
     for entry in entries {
         let entry = entry?;
-        let path = entry.path();
-        if path.extension().and_then(|value| value.to_str()) != Some("json") {
+        let file_name = entry.file_name();
+        let Some(file_name) = file_name.to_str() else {
+            continue;
+        };
+        let Some(asset_id) = file_name.strip_suffix(".json") else {
+            continue;
+        };
+        if require_asset_id(asset_id).is_err() {
             continue;
         }
+        let path = metadata_dir.join(format!("{asset_id}.json"));
         if let Ok(metadata) = read_metadata(&root, &path) {
             if verify_asset_bytes(&root, &metadata).is_ok()
                 && verify_preview_bytes(&root, &metadata).is_ok()
@@ -108,7 +116,8 @@ pub fn list(data_root: &Path) -> Result<Vec<BackgroundAssetSummary>, CommandErro
 }
 
 pub fn import(data_root: &Path, source: &Path) -> Result<BackgroundAssetSummary, CommandError> {
-    let root = ensure_root(data_root)?;
+    ensure_root(data_root)?;
+    let root = library_root(data_root);
     let source_bytes = read_selected_file(source)?;
     let display_name = display_name_for_path(source);
     let (decoded, format) = decode_supported(&source_bytes)?;
@@ -213,7 +222,8 @@ pub fn import(data_root: &Path, source: &Path) -> Result<BackgroundAssetSummary,
 /// so a partially completed deletion is safe to retry.
 pub fn remove(data_root: &Path, asset_id: &str) -> Result<(), CommandError> {
     require_asset_id(asset_id)?;
-    let root = ensure_root(data_root)?;
+    ensure_root(data_root)?;
+    let root = library_root(data_root);
     let targets = artifact_paths(&root, asset_id);
     let mut first_error = None;
 
@@ -246,7 +256,8 @@ pub fn remove(data_root: &Path, asset_id: &str) -> Result<(), CommandError> {
 
 pub fn preview(data_root: &Path, asset_id: &str) -> Result<BackgroundAssetPreview, CommandError> {
     require_asset_id(asset_id)?;
-    let root = ensure_root(data_root)?;
+    ensure_root(data_root)?;
+    let root = library_root(data_root);
     let metadata_path = root.join("metadata").join(format!("{asset_id}.json"));
     let metadata = read_metadata(&root, &metadata_path)?;
     let format = SupportedFormat::from_media_type(&metadata.media_type).ok_or_else(|| {
@@ -295,7 +306,8 @@ pub fn preview(data_root: &Path, asset_id: &str) -> Result<BackgroundAssetPrevie
 
 pub fn resolve_asset_path(data_root: &Path, asset_id: &str) -> Result<PathBuf, CommandError> {
     require_asset_id(asset_id)?;
-    let root = ensure_root(data_root)?;
+    ensure_root(data_root)?;
+    let root = library_root(data_root);
     let metadata_path = root.join("metadata").join(format!("{asset_id}.json"));
     let metadata = read_metadata(&root, &metadata_path)?;
     verify_asset_bytes(&root, &metadata)
@@ -312,9 +324,10 @@ pub fn state_for_value(
             asset_id: None,
         };
     };
-    let Ok(root) = ensure_root(data_root) else {
+    if ensure_root(data_root).is_err() {
         return external_state();
-    };
+    }
+    let root = library_root(data_root);
     let Some(candidate) = configured_image_path(source_config, value) else {
         return external_state();
     };
@@ -462,26 +475,28 @@ fn managed_asset_usage(
         ("previews", &["png", "jpg"][..], false),
         ("metadata", &["json"][..], false),
     ] {
-        for entry in fs::read_dir(root.join(directory))? {
+        let managed_directory = root.join(directory);
+        for entry in fs::read_dir(&managed_directory)? {
             let entry = entry?;
-            let path = entry.path();
-            let Some(extension) = path.extension().and_then(|value| value.to_str()) else {
+            let file_name = entry.file_name();
+            let Some(file_name) = file_name.to_str() else {
+                continue;
+            };
+            let Some((asset_id, extension)) = file_name.rsplit_once('.') else {
                 continue;
             };
             if !extensions.contains(&extension) {
                 continue;
             }
-            let Some(asset_id) = path.file_stem().and_then(|value| value.to_str()) else {
-                continue;
-            };
             if require_asset_id(asset_id).is_err() {
                 continue;
             }
             if asset_id != replaced_asset_id {
                 ids.insert(asset_id.to_string());
             }
-            if counts_bytes && path != replaced_asset_path {
-                let metadata = fs::symlink_metadata(&path)?;
+            let managed_path = managed_directory.join(format!("{asset_id}.{extension}"));
+            if counts_bytes && managed_path != replaced_asset_path {
+                let metadata = entry.metadata()?;
                 if metadata.is_file() && !metadata.file_type().is_symlink() {
                     bytes = bytes.saturating_add(metadata.len());
                 }
@@ -588,22 +603,32 @@ fn read_selected_file(path: &Path) -> Result<Vec<u8>, CommandError> {
 }
 
 fn read_regular_limited(path: &Path, limit: u64) -> Result<Vec<u8>, CommandError> {
+    read_regular_limited_with_hook(path, limit, || {})
+}
+
+fn read_regular_limited_with_hook(
+    path: &Path,
+    limit: u64,
+    before_open: impl FnOnce(),
+) -> Result<Vec<u8>, CommandError> {
     let visible = fs::symlink_metadata(path).map_err(|_| {
         CommandError::new(
             "background_image_unreadable",
             "the selected image could not be opened",
         )
     })?;
-    if visible.file_type().is_symlink() || !visible.is_file() || visible.len() > limit {
+    let invalid_file_type = visible.file_type().is_symlink() || !visible.is_file();
+    if invalid_file_type || visible.len() > limit {
         return Err(CommandError::new(
-            if visible.len() > limit {
-                "background_image_too_large"
-            } else {
+            if invalid_file_type {
                 "background_image_unreadable"
+            } else {
+                "background_image_too_large"
             },
             "the selected image must be a regular file within the size limit",
         ));
     }
+    before_open();
     let mut options = OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -618,25 +643,52 @@ fn read_regular_limited(path: &Path, limit: u64) -> Result<Vec<u8>, CommandError
         )
     })?;
     let opened = file.metadata()?;
-    if !opened.is_file() || opened.len() != visible.len() || opened.len() > limit {
+    if !opened.is_file() || !same_file_identity(&visible, &opened) || opened.len() > limit {
         return Err(CommandError::new(
             "background_image_changed",
             "the selected image changed while it was being opened",
         ));
     }
     let mut bytes = Vec::with_capacity(opened.len() as usize);
-    file.take(limit + 1).read_to_end(&mut bytes)?;
+    (&file).take(limit + 1).read_to_end(&mut bytes)?;
     if bytes.len() as u64 > limit {
         return Err(CommandError::new(
             "background_image_too_large",
             "the selected image exceeds the size limit",
         ));
     }
+    let completed = file.metadata()?;
+    if !same_file_identity(&opened, &completed) || completed.len() != bytes.len() as u64 {
+        return Err(CommandError::new(
+            "background_image_changed",
+            "the selected image changed while it was being read",
+        ));
+    }
     Ok(bytes)
 }
 
-fn ensure_root(data_root: &Path) -> Result<PathBuf, CommandError> {
-    let root = data_root.join("backgrounds").join("v1");
+#[cfg(unix)]
+fn same_file_identity(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+
+    left.dev() == right.dev()
+        && left.ino() == right.ino()
+        && left.len() == right.len()
+        && left.mtime() == right.mtime()
+        && left.mtime_nsec() == right.mtime_nsec()
+}
+
+#[cfg(not(unix))]
+fn same_file_identity(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    left.len() == right.len() && left.modified().ok() == right.modified().ok()
+}
+
+fn library_root(data_root: &Path) -> PathBuf {
+    data_root.join("backgrounds").join("v1")
+}
+
+fn ensure_root(data_root: &Path) -> Result<(), CommandError> {
+    let root = library_root(data_root);
     for path in [
         data_root.to_path_buf(),
         data_root.join("backgrounds"),
@@ -655,7 +707,7 @@ fn ensure_root(data_root: &Path) -> Result<PathBuf, CommandError> {
         }
         set_private_directory(&path)?;
     }
-    Ok(root)
+    Ok(())
 }
 
 fn asset_path_for_metadata(
@@ -721,13 +773,13 @@ fn persist_private_replacing(path: &Path, bytes: &[u8]) -> Result<(), CommandErr
         ));
     }
     let mut temporary = NamedTempFile::new_in(parent)?;
-    set_private_file(temporary.path())?;
+    set_private_file(temporary.as_file())?;
     temporary.write_all(bytes)?;
     temporary.as_file_mut().flush()?;
     temporary.as_file().sync_all()?;
     match temporary.persist(path) {
         Ok(file) => {
-            set_private_file(path)?;
+            set_private_file(&file)?;
             file.sync_all()?;
             let _ = File::open(parent).and_then(|directory| directory.sync_all());
             Ok(())
@@ -835,8 +887,20 @@ fn hex(bytes: &[u8]) -> String {
 
 #[cfg(unix)]
 fn set_private_directory(path: &Path) -> Result<(), CommandError> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+    let mut options = OpenOptions::new();
+    options
+        .read(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_DIRECTORY | libc::O_NOFOLLOW);
+    let directory = options.open(path)?;
+    if !directory.metadata()?.is_dir() {
+        return Err(CommandError::new(
+            "background_library_unavailable",
+            "the private image library path is not a regular directory",
+        ));
+    }
+    directory.set_permissions(fs::Permissions::from_mode(0o700))?;
     Ok(())
 }
 
@@ -846,14 +910,15 @@ fn set_private_directory(_path: &Path) -> Result<(), CommandError> {
 }
 
 #[cfg(unix)]
-fn set_private_file(path: &Path) -> Result<(), CommandError> {
+fn set_private_file(file: &File) -> Result<(), CommandError> {
     use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+
+    file.set_permissions(fs::Permissions::from_mode(0o600))?;
     Ok(())
 }
 
 #[cfg(not(unix))]
-fn set_private_file(_path: &Path) -> Result<(), CommandError> {
+fn set_private_file(_file: &File) -> Result<(), CommandError> {
     Ok(())
 }
 
@@ -861,6 +926,11 @@ fn set_private_file(_path: &Path) -> Result<(), CommandError> {
 mod tests {
     use super::*;
     use image::ImageEncoder;
+
+    fn initialized_root(data_root: &Path) -> PathBuf {
+        ensure_root(data_root).unwrap();
+        library_root(data_root)
+    }
 
     fn test_png() -> Vec<u8> {
         let image = DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
@@ -909,7 +979,7 @@ mod tests {
     #[test]
     fn display_name_limit_is_120_unicode_scalars_in_import_and_metadata() {
         let directory = tempfile::tempdir().unwrap();
-        let root = ensure_root(directory.path()).unwrap();
+        let root = initialized_root(directory.path());
         let long_name = "图".repeat(MAX_DISPLAY_NAME_CHARS + 1);
         let displayed = display_name_for_path(Path::new(&format!("/tmp/{long_name}")));
         assert_eq!(displayed.chars().count(), MAX_DISPLAY_NAME_CHARS);
@@ -944,6 +1014,95 @@ mod tests {
         assert!(decode_supported(b"GIF89a").is_err());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn regular_read_rejects_a_same_size_inode_replacement() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("selected.png");
+        let replacement = directory.path().join("replacement.png");
+        fs::write(&source, b"first").unwrap();
+        fs::write(&replacement, b"other").unwrap();
+
+        let error = read_regular_limited_with_hook(&source, 16, || {
+            fs::rename(&replacement, &source).unwrap();
+        })
+        .unwrap_err();
+
+        assert_eq!(error.code, "background_image_changed");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn regular_read_rejects_a_symlink_without_touching_its_target() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().unwrap();
+        let outside = directory.path().join("outside.png");
+        let selected = directory.path().join("selected.png");
+        fs::write(&outside, b"outside sentinel").unwrap();
+        symlink(&outside, &selected).unwrap();
+
+        let error = read_regular_limited(&selected, 64).unwrap_err();
+
+        assert_eq!(error.code, "background_image_unreadable");
+        assert_eq!(fs::read(&outside).unwrap(), b"outside sentinel");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_persist_replaces_a_symlink_without_chmodding_its_target() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+
+        let directory = tempfile::tempdir().unwrap();
+        let root = initialized_root(directory.path());
+        let destination = root.join("assets").join(format!("{}.png", "a".repeat(64)));
+        let outside = directory.path().join("outside-sentinel");
+        fs::write(&outside, b"keep outside").unwrap();
+        fs::set_permissions(&outside, fs::Permissions::from_mode(0o640)).unwrap();
+        let outside_mode = fs::metadata(&outside).unwrap().permissions().mode() & 0o777;
+        symlink(&outside, &destination).unwrap();
+
+        persist_private_replacing(&destination, b"managed copy").unwrap();
+
+        assert!(!fs::symlink_metadata(&destination)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(fs::read(&destination).unwrap(), b"managed copy");
+        assert_eq!(
+            fs::metadata(&destination).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(fs::read(&outside).unwrap(), b"keep outside");
+        assert_eq!(
+            fs::metadata(&outside).unwrap().permissions().mode() & 0o777,
+            outside_mode
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_root_rejects_a_symlinked_directory_without_chmodding_its_target() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+
+        let directory = tempfile::tempdir().unwrap();
+        let data_root = directory.path().join("app-data");
+        let outside = directory.path().join("outside-directory");
+        fs::create_dir(&data_root).unwrap();
+        fs::create_dir(&outside).unwrap();
+        fs::set_permissions(&outside, fs::Permissions::from_mode(0o750)).unwrap();
+        let outside_mode = fs::metadata(&outside).unwrap().permissions().mode() & 0o777;
+        symlink(&outside, data_root.join("backgrounds")).unwrap();
+
+        let error = ensure_root(&data_root).unwrap_err();
+
+        assert_eq!(error.code, "background_library_unavailable");
+        assert_eq!(
+            fs::metadata(&outside).unwrap().permissions().mode() & 0o777,
+            outside_mode
+        );
+    }
+
     #[test]
     fn jpeg_exif_orientation_is_applied_before_metadata_is_removed() {
         let source = test_oriented_jpeg();
@@ -965,10 +1124,9 @@ mod tests {
         let asset = import(directory.path(), &source_path).unwrap();
         assert_eq!((asset.width, asset.height), (2, 3));
 
-        let managed_path = resolve_asset_path(directory.path(), &asset.id).unwrap();
-        let managed = fs::read(managed_path).unwrap();
-        let (reopened, _) = decode_supported(&managed).unwrap();
-        assert_eq!(reopened.dimensions(), (2, 3));
+        // resolve_asset_path reopens, decodes, hashes, and compares the managed bytes
+        // against the imported metadata, including these oriented dimensions.
+        resolve_asset_path(directory.path(), &asset.id).unwrap();
     }
 
     #[test]
@@ -1003,7 +1161,7 @@ mod tests {
     #[test]
     fn import_limits_count_every_managed_artifact_id() {
         let directory = tempfile::tempdir().unwrap();
-        let root = ensure_root(directory.path()).unwrap();
+        let root = initialized_root(directory.path());
         for index in 0..MAX_LIBRARY_ASSETS {
             let id = format!("{index:064x}");
             fs::write(root.join("metadata").join(format!("{id}.json")), b"broken").unwrap();
@@ -1019,7 +1177,7 @@ mod tests {
     #[test]
     fn import_counts_managed_asset_bytes_even_when_metadata_is_missing() {
         let directory = tempfile::tempdir().unwrap();
-        let root = ensure_root(directory.path()).unwrap();
+        let root = initialized_root(directory.path());
         let occupied_id = "b".repeat(64);
         let occupied = root.join("assets").join(format!("{occupied_id}.png"));
         File::create(occupied)
@@ -1040,7 +1198,7 @@ mod tests {
         let source = directory.path().join("repair-me.png");
         fs::write(&source, test_png()).unwrap();
         let first = import(directory.path(), &source).unwrap();
-        let root = ensure_root(directory.path()).unwrap();
+        let root = initialized_root(directory.path());
         let metadata_path = root.join("metadata").join(format!("{}.json", first.id));
         let asset_path = root.join("assets").join(format!("{}.png", first.id));
         let preview_path = root.join("previews").join(format!("{}.png", first.id));
@@ -1088,7 +1246,7 @@ mod tests {
         let source = directory.path().join("remove-me.png");
         fs::write(&source, test_png()).unwrap();
         let asset = import(directory.path(), &source).unwrap();
-        let root = ensure_root(directory.path()).unwrap();
+        let root = initialized_root(directory.path());
         let sentinel = root.join("metadata").join("keep-me.txt");
         fs::write(&sentinel, b"keep").unwrap();
 
@@ -1112,7 +1270,7 @@ mod tests {
         let source = directory.path().join("symlink-remove.png");
         fs::write(&source, test_png()).unwrap();
         let asset = import(directory.path(), &source).unwrap();
-        let root = ensure_root(directory.path()).unwrap();
+        let root = initialized_root(directory.path());
         let asset_path = root.join("assets").join(format!("{}.png", asset.id));
         let outside = directory.path().join("outside-sentinel");
         fs::write(&outside, b"keep outside").unwrap();
@@ -1130,7 +1288,7 @@ mod tests {
         let source = directory.path().join("retry-remove.png");
         fs::write(&source, test_png()).unwrap();
         let asset = import(directory.path(), &source).unwrap();
-        let root = ensure_root(directory.path()).unwrap();
+        let root = initialized_root(directory.path());
         let asset_path = root.join("assets").join(format!("{}.png", asset.id));
         let metadata_path = root.join("metadata").join(format!("{}.json", asset.id));
         let preview_path = root.join("previews").join(format!("{}.png", asset.id));
@@ -1179,7 +1337,7 @@ mod tests {
         fs::write(&source, test_png()).unwrap();
         let asset = import(directory.path(), &source).unwrap();
         let managed = resolve_asset_path(directory.path(), &asset.id).unwrap();
-        let private_root = ensure_root(directory.path()).unwrap();
+        let private_root = initialized_root(directory.path());
         let declaring_config = private_root.join("config");
 
         let quoted = format!("\"{}\"", managed.display());

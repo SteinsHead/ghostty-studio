@@ -499,7 +499,7 @@ pub fn write_atomically(
     let prepared_replacement = prepare_replacement(target, candidate)?;
 
     let snapshot_id = Uuid::new_v4().to_string();
-    let snapshots = data_root.join("snapshots");
+    let snapshots = snapshot_directory(data_root);
     create_private_directory(&snapshots)?;
     // Make room before creating the new pair. This also prevents repeated
     // pre-commit conflicts from growing snapshot storage without bound.
@@ -581,23 +581,17 @@ pub fn write_atomically(
 }
 
 pub fn list_snapshots(data_root: &Path, target: &Path) -> Result<Vec<SnapshotInfo>, CommandError> {
-    let mut results = snapshot_records(data_root, target)?
-        .into_iter()
-        .map(|(snapshot, _)| snapshot)
-        .collect::<Vec<_>>();
+    let mut results = snapshot_records(data_root, target)?;
     results.sort_by_key(|snapshot| std::cmp::Reverse(snapshot.created_at_ms));
     results.truncate(MAX_SNAPSHOTS_PER_TARGET);
     Ok(results)
 }
 
-fn snapshot_records(
-    data_root: &Path,
-    target: &Path,
-) -> Result<Vec<(SnapshotInfo, std::path::PathBuf)>, CommandError> {
-    let snapshots = data_root.join("snapshots");
-    if !snapshots.exists() {
+fn snapshot_records(data_root: &Path, target: &Path) -> Result<Vec<SnapshotInfo>, CommandError> {
+    if !snapshot_directory_is_safe(data_root)? {
         return Ok(Vec::new());
     }
+    let snapshots = snapshot_directory(data_root);
     let expected_target_hash = path_hash(target);
     let mut results = Vec::new();
     for (index, entry) in fs::read_dir(snapshots)?.enumerate() {
@@ -620,7 +614,7 @@ fn snapshot_records(
         };
         let expected_file_name = format!("{}.json", snapshot.id);
         if snapshot.target_hash != expected_target_hash
-            || Uuid::parse_str(&snapshot.id).is_err()
+            || !is_canonical_snapshot_id(&snapshot.id)
             || path.file_name().and_then(|value| value.to_str()) != Some(&expected_file_name)
             || snapshot.created_at_ms == 0
             || snapshot.size_bytes > 4 * 1024 * 1024
@@ -628,15 +622,12 @@ fn snapshot_records(
         {
             continue;
         }
-        results.push((
-            SnapshotInfo {
-                id: snapshot.id,
-                created_at_ms: snapshot.created_at_ms,
-                revision: snapshot.revision,
-                size_bytes: snapshot.size_bytes,
-            },
-            path,
-        ));
+        results.push(SnapshotInfo {
+            id: snapshot.id,
+            created_at_ms: snapshot.created_at_ms,
+            revision: snapshot.revision,
+            size_bytes: snapshot.size_bytes,
+        });
     }
     Ok(results)
 }
@@ -647,10 +638,13 @@ fn prune_snapshots(
     preserve_snapshot_id: &str,
 ) -> Result<(), CommandError> {
     let mut records = snapshot_records(data_root, target)?;
-    records.sort_by_key(|(snapshot, _)| std::cmp::Reverse(snapshot.created_at_ms));
-    let snapshots = data_root.join("snapshots");
+    records.sort_by_key(|snapshot| std::cmp::Reverse(snapshot.created_at_ms));
+    if !snapshot_directory_is_safe(data_root)? {
+        return Ok(());
+    }
+    let snapshots = snapshot_directory(data_root);
     let mut retained_other_snapshots = 0_usize;
-    for (snapshot, metadata_path) in records {
+    for snapshot in records {
         if snapshot.id == preserve_snapshot_id {
             continue;
         }
@@ -659,6 +653,7 @@ fn prune_snapshots(
             continue;
         }
         let content_path = snapshots.join(format!("{}.ghostty", snapshot.id));
+        let metadata_path = snapshots.join(format!("{}.json", snapshot.id));
         match fs::symlink_metadata(&content_path) {
             Ok(metadata)
                 if metadata.file_type().is_file() && !metadata.file_type().is_symlink() =>
@@ -674,7 +669,7 @@ fn prune_snapshots(
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
         }
-        fs::remove_file(metadata_path)?;
+        fs::remove_file(&metadata_path)?;
     }
     File::open(snapshots)?.sync_all()?;
     Ok(())
@@ -685,10 +680,19 @@ pub fn read_snapshot(
     target: &Path,
     snapshot_id: &str,
 ) -> Result<Vec<u8>, CommandError> {
-    Uuid::parse_str(snapshot_id).map_err(|_| {
-        CommandError::new("invalid_snapshot_id", "snapshot id must be a valid UUID")
-    })?;
-    let snapshots = data_root.join("snapshots");
+    if !is_canonical_snapshot_id(snapshot_id) {
+        return Err(CommandError::new(
+            "invalid_snapshot_id",
+            "snapshot id must be a canonical UUID",
+        ));
+    }
+    if !snapshot_directory_is_safe(data_root)? {
+        return Err(CommandError::new(
+            "unknown_snapshot",
+            "snapshot storage is unavailable",
+        ));
+    }
+    let snapshots = snapshot_directory(data_root);
     let metadata_path = snapshots.join(format!("{snapshot_id}.json"));
     let content_path = snapshots.join(format!("{snapshot_id}.ghostty"));
     let metadata_bytes = read_regular_snapshot_file(&metadata_path, 64 * 1024)?;
@@ -962,6 +966,30 @@ fn is_revision(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
+fn is_canonical_snapshot_id(value: &str) -> bool {
+    Uuid::parse_str(value).is_ok_and(|uuid| uuid.hyphenated().to_string() == value)
+}
+
+fn snapshot_directory(data_root: &Path) -> std::path::PathBuf {
+    data_root.join("snapshots")
+}
+
+fn snapshot_directory_is_safe(data_root: &Path) -> Result<bool, CommandError> {
+    let snapshots = snapshot_directory(data_root);
+    let metadata = match fs::symlink_metadata(&snapshots) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.into()),
+    };
+    if metadata.file_type().is_symlink() || !metadata.file_type().is_dir() {
+        return Err(CommandError::new(
+            "invalid_private_directory",
+            "snapshot storage path is not a regular directory",
+        ));
+    }
+    Ok(true)
+}
+
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
@@ -1162,6 +1190,29 @@ mod tests {
         fs::write(&target, b"font-size = 13\n").unwrap();
         let error = read_snapshot(directory.path(), &target, "../../secret").unwrap_err();
         assert_eq!(error.code, "invalid_snapshot_id");
+        let noncanonical = Uuid::new_v4().simple().to_string();
+        let error = read_snapshot(directory.path(), &target, &noncanonical).unwrap_err();
+        assert_eq!(error.code, "invalid_snapshot_id");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn snapshot_storage_refuses_a_symlinked_root() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().unwrap();
+        let data_root = directory.path().join("data");
+        let outside = directory.path().join("outside");
+        let target = directory.path().join("config");
+        fs::create_dir_all(&data_root).unwrap();
+        fs::create_dir(&outside).unwrap();
+        fs::write(&target, b"font-size = 13\n").unwrap();
+        fs::write(outside.join("canary"), b"keep").unwrap();
+        symlink(&outside, snapshot_directory(&data_root)).unwrap();
+
+        let error = list_snapshots(&data_root, &target).unwrap_err();
+        assert_eq!(error.code, "invalid_private_directory");
+        assert_eq!(fs::read(outside.join("canary")).unwrap(), b"keep");
     }
 
     #[cfg(unix)]

@@ -1,14 +1,10 @@
 name: Release candidate
 
-run-name: Release candidate v${{ inputs.version }} from ${{ inputs.ref }}
+run-name: Release candidate v${{ inputs.version }} from protected main
 
 on:
   workflow_dispatch:
     inputs:
-      ref:
-        description: Branch, commit, or tag to build
-        required: true
-        type: string
       version:
         description: Version expected in package.json, Cargo.toml, and tauri.conf.json
         required: true
@@ -18,22 +14,38 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-candidate-${{ inputs.ref }}
+  group: release-candidate-main
   cancel-in-progress: false
 
 jobs:
+  protected-source:
+    name: Require protected main
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Reject any other workflow ref
+        env:
+          SOURCE_REF: ${{ github.ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$SOURCE_REF" != "refs/heads/main" ]]; then
+            echo "release candidates may only be built from protected main" >&2
+            exit 1
+          fi
+
   macos-arm64:
     name: macOS ARM64 candidate
+    needs: protected-source
     runs-on: macos-15
     timeout-minutes: 45
     env:
       EXPECTED_VERSION: ${{ inputs.version }}
-      SOURCE_REF: ${{ inputs.ref }}
+      SOURCE_REF: refs/heads/main
       RUSTFLAGS: ""
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.ref }}
           persist-credentials: false
 
       - name: Verify source and ARM64 runner
@@ -48,7 +60,12 @@ jobs:
             echo "the checked-out source is not clean" >&2
             exit 1
           fi
-          git rev-parse --verify HEAD
+          checked_out_sha="$(git rev-parse --verify HEAD)"
+          if [[ "$checked_out_sha" != "$GITHUB_SHA" ]]; then
+            echo "checkout does not match the immutable workflow event SHA" >&2
+            exit 1
+          fi
+          printf '%s\n' "$checked_out_sha"
 
       - uses: pnpm/action-setup@f520eceda224fe1a4aed5a2a27a194379a409996 # v6
         with:
