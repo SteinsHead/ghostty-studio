@@ -62,7 +62,7 @@
 
 ## 从源码运行
 
-需要 Ghostty、Xcode Command Line Tools、Node 22.12.0、pnpm 10 和仓库固定的 Rust 工具链。
+需要 Ghostty、Xcode Command Line Tools、Node 22.22.2、pnpm 10 和仓库固定的 Rust 工具链。
 
 ```bash
 pnpm install --frozen-lockfile
