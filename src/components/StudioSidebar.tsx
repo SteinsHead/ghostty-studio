@@ -110,7 +110,9 @@ export function StudioSidebar({
             ? searchLabel
             : text("打开配置后即可搜索", "Open a configuration to search")}
           aria-label={searchLabel}
-          aria-keyshortcuts={workspaceReady ? "Meta+K Control+K" : undefined}
+          aria-keyshortcuts={workspaceReady
+            ? `Meta+K Control+K${search ? " Escape" : ""}`
+            : undefined}
           aria-describedby={workspaceReady && search ? "search-result-count" : undefined}
         />
         {workspaceReady && search ? (
