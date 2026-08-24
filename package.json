@@ -31,7 +31,7 @@
   },
   "dependencies": {
     "@tauri-apps/api": "2.11.1",
-    "lucide-react": "1.29.0",
+    "lucide-react": "1.33.0",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },
@@ -42,8 +42,8 @@
     "@vitejs/plugin-react": "5.2.0",
     "jsdom": "30.0.1",
     "typescript": "7.0.2",
-    "vite": "8.2.1",
-    "vitest": "4.1.10"
+    "vite": "8.2.2",
+    "vitest": "4.1.11"
   },
   "packageManager": "pnpm@10.8.1"
 }
